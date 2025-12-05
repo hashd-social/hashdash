@@ -1,6 +1,6 @@
 # HASHDash
 
-Official Management Portal for HASHD waitlist entries and analytics etc. 
+Official Management Portal for HASHD waitlist onboarding, analytics, and operational controls. This system is separate from the HASHD protocol and does not affect the main client.
 
 ## Setup
 
