@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { Plus, Trash2, Edit2, Save, X, Palette, RefreshCw, Gift } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Palette, RefreshCw, Gift, DollarSign, ArrowDown } from 'lucide-react';
 import { useToast } from '../Toast';
 import { CONTRACT_ADDRESSES, ACCOUNT_REGISTRY_ABI, HASHD_TAG_ABI } from '../../config/contracts';
+
+// Chainlink ETH/USD Price Feed on Ethereum Mainnet
+const CHAINLINK_ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
+const CHAINLINK_ABI = ['function latestAnswer() view returns (int256)'];
+
+// Default USD pricing tiers
+const DEFAULT_USD_PRICES = [1000, 500, 250, 50, 10]; // $1000, $500, $250, $50, $10
 
 interface DomainInfo {
   name: string;
@@ -23,14 +30,20 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
   const [firstFreeEnabled, setFirstFreeEnabled] = useState(true);
   const [togglingFree, setTogglingFree] = useState(false);
   
+  // ETH price state
+  const [ethPrice, setEthPrice] = useState<number | null>(null);
+  const [fetchingPrice, setFetchingPrice] = useState(false);
+  
   // Add domain form
   const [showAddForm, setShowAddForm] = useState(false);
   const [newDomain, setNewDomain] = useState('');
-  const [newTierPrices, setNewTierPrices] = useState(['1', '0.1', '0.01', '0.001', '0.0001']);
+  const [newTierPricesUsd, setNewTierPricesUsd] = useState<string[]>(DEFAULT_USD_PRICES.map(String));
+  const [newTierPricesEth, setNewTierPricesEth] = useState<string[]>(['0.25', '0.125', '0.0625', '0.0125', '0.0025']);
   
   // Edit state
   const [editingDomain, setEditingDomain] = useState<string | null>(null);
-  const [editTierPrices, setEditTierPrices] = useState<string[]>([]);
+  const [editTierPricesUsd, setEditTierPricesUsd] = useState<string[]>([]);
+  const [editTierPricesEth, setEditTierPricesEth] = useState<string[]>([]);
   const [editColor, setEditColor] = useState('');
 
   const fetchDomains = useCallback(async () => {
@@ -100,6 +113,100 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
     fetchDomains();
   }, [fetchDomains]);
 
+  // Fetch ETH price from Chainlink oracle (mainnet)
+  const fetchEthPrice = useCallback(async () => {
+    setFetchingPrice(true);
+    try {
+      // Use mainnet provider for Chainlink price feed
+      const mainnetProvider = new ethers.JsonRpcProvider('https://eth.llamarpc.com');
+      const priceFeed = new ethers.Contract(CHAINLINK_ETH_USD_FEED, CHAINLINK_ABI, mainnetProvider);
+      
+      const answer = await priceFeed.latestAnswer();
+      // Chainlink returns price with 8 decimals
+      const price = Number(answer) / 1e8;
+      setEthPrice(price);
+      toast.success(`ETH price updated: $${price.toFixed(2)}`);
+      return price;
+    } catch (error) {
+      console.error('Error fetching ETH price:', error);
+      toast.error('Failed to fetch ETH price from Chainlink');
+      return null;
+    } finally {
+      setFetchingPrice(false);
+    }
+  }, [toast]);
+
+  // Convert USD to ETH
+  const usdToEth = (usd: number, price: number): string => {
+    if (!price || price === 0) return '0';
+    return (usd / price).toFixed(6);
+  };
+
+  // Convert ETH to USD
+  const ethToUsd = (eth: number, price: number): string => {
+    if (!price) return '0';
+    return (eth * price).toFixed(2);
+  };
+
+  // Update a single tier's ETH price from its USD value
+  const updateSingleEthFromUsd = (
+    index: number,
+    usdPrices: string[],
+    ethPrices: string[],
+    setEth: (prices: string[]) => void
+  ) => {
+    if (!ethPrice) {
+      toast.error('Fetch ETH price first');
+      return;
+    }
+    const usdNum = parseFloat(usdPrices[index]) || 0;
+    const updatedEth = [...ethPrices];
+    updatedEth[index] = usdToEth(usdNum, ethPrice);
+    setEth(updatedEth);
+  };
+
+  // Handle USD input change - update corresponding ETH
+  const handleUsdChange = (
+    index: number, 
+    value: string, 
+    usdPrices: string[], 
+    setUsd: (p: string[]) => void,
+    setEth: (p: string[]) => void,
+    ethPrices: string[]
+  ) => {
+    const updatedUsd = [...usdPrices];
+    updatedUsd[index] = value;
+    setUsd(updatedUsd);
+    
+    if (ethPrice) {
+      const updatedEth = [...ethPrices];
+      const usdNum = parseFloat(value) || 0;
+      updatedEth[index] = usdToEth(usdNum, ethPrice);
+      setEth(updatedEth);
+    }
+  };
+
+  // Handle ETH input change - update corresponding USD
+  const handleEthChange = (
+    index: number, 
+    value: string, 
+    ethPrices: string[], 
+    setEth: (p: string[]) => void,
+    setUsd: (p: string[]) => void,
+    usdPrices: string[]
+  ) => {
+    const updatedEth = [...ethPrices];
+    updatedEth[index] = value;
+    setEth(updatedEth);
+    
+    if (ethPrice) {
+      const updatedUsd = [...usdPrices];
+      const ethNum = parseFloat(value) || 0;
+      updatedUsd[index] = ethToUsd(ethNum, ethPrice);
+      setUsd(updatedUsd);
+    }
+  };
+
   const handleAddDomain = async () => {
     if (!newDomain.trim()) {
       toast.error('Domain name required');
@@ -115,7 +222,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
         signer
       );
 
-      const tierPricesWei = newTierPrices.map(p => ethers.parseEther(p));
+      const tierPricesWei = newTierPricesEth.map((p: string) => ethers.parseEther(p || '0'));
       
       toast.info('Submitting transaction...');
       const tx = await accountRegistry.addDomain(newDomain.toLowerCase(), tierPricesWei);
@@ -124,7 +231,8 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       toast.success(`Domain "${newDomain}" added!`);
       setShowAddForm(false);
       setNewDomain('');
-      setNewTierPrices(['1', '0.1', '0.01', '0.001', '0.0001']);
+      setNewTierPricesUsd(DEFAULT_USD_PRICES.map(String));
+      setNewTierPricesEth(['0.25', '0.125', '0.0625', '0.0125', '0.0025']);
       fetchDomains();
     } catch (error: any) {
       console.error('Error adding domain:', error);
@@ -142,7 +250,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
         signer
       );
 
-      const tierPricesWei = editTierPrices.map(p => ethers.parseEther(p));
+      const tierPricesWei = editTierPricesEth.map((p: string) => ethers.parseEther(p || '0'));
       
       toast.info('Submitting transaction...');
       const tx = await accountRegistry.setDomainTierPrices(domain, tierPricesWei);
@@ -211,7 +319,15 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
 
   const startEditing = (domain: DomainInfo) => {
     setEditingDomain(domain.name);
-    setEditTierPrices(domain.tierPrices.map(p => ethers.formatEther(p)));
+    const ethPrices = domain.tierPrices.map((p: bigint) => ethers.formatEther(p));
+    setEditTierPricesEth(ethPrices);
+    // Calculate USD prices if we have ETH price
+    if (ethPrice) {
+      const usdPrices = ethPrices.map(eth => ethToUsd(parseFloat(eth), ethPrice));
+      setEditTierPricesUsd(usdPrices);
+    } else {
+      setEditTierPricesUsd(['', '', '', '', '']);
+    }
     setEditColor(domain.color);
   };
 
@@ -284,6 +400,25 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
         </div>
       )}
 
+      {/* ETH Price Fetch - Global */}
+      <div className="flex items-center gap-3 p-3 bg-gray-800 border border-gray-700 rounded-lg">
+        <DollarSign className="text-green-400" size={20} />
+        <div className="flex-1">
+          <span className="text-gray-400 text-sm">ETH/USD Price: </span>
+          <span className="text-white font-mono">
+            {ethPrice ? `$${ethPrice.toFixed(2)}` : 'Not fetched'}
+          </span>
+        </div>
+        <button
+          onClick={fetchEthPrice}
+          disabled={fetchingPrice}
+          className="flex items-center gap-1 px-3 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white text-sm rounded transition-colors"
+        >
+          {fetchingPrice ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+          Get Latest Price
+        </button>
+      </div>
+
       {/* First Free HashdTag Toggle */}
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
         <div className="flex items-center justify-between">
@@ -337,26 +472,55 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-cyan-500"
               />
             </div>
+
+            {/* USD Prices */}
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Tier Prices (ETH)</label>
+              <label className="block text-sm text-gray-400 mb-2">Tier Prices (USD)</label>
+              <div className="grid grid-cols-5 gap-2">
+                {tierLabels.map((label, i) => (
+                  <div key={i}>
+                    <span className="text-xs text-gray-500">{label}</span>
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex-1">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                        <input
+                          type="text"
+                          value={newTierPricesUsd[i]}
+                          onChange={(e) => handleUsdChange(i, e.target.value, newTierPricesUsd, setNewTierPricesUsd, setNewTierPricesEth, newTierPricesEth)}
+                          className="w-full pl-5 pr-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <button
+                        onClick={() => updateSingleEthFromUsd(i, newTierPricesUsd, newTierPricesEth, setNewTierPricesEth)}
+                        className="p-1 text-gray-400 hover:text-cyan-400 transition-colors"
+                        title="Convert to ETH"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ETH Prices */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Tier Prices (ETH) - sent to contract</label>
               <div className="grid grid-cols-5 gap-2">
                 {tierLabels.map((label, i) => (
                   <div key={i}>
                     <span className="text-xs text-gray-500">{label}</span>
                     <input
                       type="text"
-                      value={newTierPrices[i]}
-                      onChange={(e) => {
-                        const updated = [...newTierPrices];
-                        updated[i] = e.target.value;
-                        setNewTierPrices(updated);
-                      }}
-                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                      value={newTierPricesEth[i]}
+                      onChange={(e) => handleEthChange(i, e.target.value, newTierPricesEth, setNewTierPricesEth, setNewTierPricesUsd, newTierPricesUsd)}
+                      className="w-full px-2 py-1 bg-gray-700 border border-cyan-600 rounded text-cyan-400 text-sm font-mono focus:outline-none focus:border-cyan-400"
                     />
                   </div>
                 ))}
               </div>
             </div>
+
             <div className="flex gap-2">
               <button
                 onClick={handleAddDomain}
@@ -417,32 +581,58 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
 
               {editingDomain === domain.name ? (
                 <div className="space-y-4">
-                  {/* Edit Tier Prices */}
+                  {/* Edit USD Prices */}
                   <div>
-                    <label className="block text-sm text-gray-400 mb-2">Tier Prices (ETH)</label>
+                    <label className="block text-sm text-gray-400 mb-2">Tier Prices (USD)</label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {tierLabels.map((label, i) => (
+                        <div key={i}>
+                          <span className="text-xs text-gray-500">{label}</span>
+                          <div className="flex items-center gap-1">
+                            <div className="relative flex-1">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                              <input
+                                type="text"
+                                value={editTierPricesUsd[i]}
+                                onChange={(e) => handleUsdChange(i, e.target.value, editTierPricesUsd, setEditTierPricesUsd, setEditTierPricesEth, editTierPricesEth)}
+                                className="w-full pl-5 pr-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                              />
+                            </div>
+                            <button
+                              onClick={() => updateSingleEthFromUsd(i, editTierPricesUsd, editTierPricesEth, setEditTierPricesEth)}
+                              className="p-1 text-gray-400 hover:text-cyan-400 transition-colors"
+                              title="Convert to ETH"
+                            >
+                              <ArrowDown size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Edit ETH Prices */}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Tier Prices (ETH) - sent to contract</label>
                     <div className="grid grid-cols-5 gap-2">
                       {tierLabels.map((label, i) => (
                         <div key={i}>
                           <span className="text-xs text-gray-500">{label}</span>
                           <input
                             type="text"
-                            value={editTierPrices[i]}
-                            onChange={(e) => {
-                              const updated = [...editTierPrices];
-                              updated[i] = e.target.value;
-                              setEditTierPrices(updated);
-                            }}
-                            className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                            value={editTierPricesEth[i]}
+                            onChange={(e) => handleEthChange(i, e.target.value, editTierPricesEth, setEditTierPricesEth, setEditTierPricesUsd, editTierPricesUsd)}
+                            className="w-full px-2 py-1 bg-gray-700 border border-cyan-600 rounded text-cyan-400 text-sm font-mono focus:outline-none focus:border-cyan-400"
                           />
                         </div>
                       ))}
                     </div>
                     <button
                       onClick={() => handleUpdateTierPrices(domain.name)}
-                      className="mt-2 flex items-center gap-1 px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white text-sm rounded transition-colors"
+                      className="mt-3 flex items-center gap-1 px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white text-sm rounded transition-colors"
                     >
                       <Save size={14} />
-                      Save Prices
+                      Update Prices on Contract
                     </button>
                   </div>
 
@@ -483,14 +673,23 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
                 </div>
               ) : (
                 <div className="grid grid-cols-5 gap-2">
-                  {tierLabels.map((label, i) => (
-                    <div key={i} className="bg-gray-700/50 rounded p-2">
-                      <span className="text-xs text-gray-500 block">{label}</span>
-                      <span className="text-white font-mono">
-                        {ethers.formatEther(domain.tierPrices[i])} ETH
-                      </span>
-                    </div>
-                  ))}
+                  {tierLabels.map((label, i) => {
+                    const ethValue = parseFloat(ethers.formatEther(domain.tierPrices[i]));
+                    const usdValue = ethPrice ? ethValue * ethPrice : null;
+                    return (
+                      <div key={i} className="bg-gray-700/50 rounded p-2">
+                        <span className="text-xs text-gray-500 block">{label}</span>
+                        <span className="text-cyan-400 font-mono block">
+                          {ethValue.toFixed(4)} ETH
+                        </span>
+                        {usdValue !== null && (
+                          <span className="text-green-400 text-xs font-mono">
+                            ${usdValue.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
