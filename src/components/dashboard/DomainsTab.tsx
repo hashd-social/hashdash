@@ -16,6 +16,7 @@ interface DomainInfo {
   tierPrices: bigint[];
   accountCount: number;
   color: string;
+  textColor: string;
 }
 
 interface DomainsTabProps {
@@ -45,6 +46,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
   const [editTierPricesUsd, setEditTierPricesUsd] = useState<string[]>([]);
   const [editTierPricesEth, setEditTierPricesEth] = useState<string[]>([]);
   const [editColor, setEditColor] = useState('');
+  const [editTextColor, setEditTextColor] = useState('');
 
   const fetchDomains = useCallback(async () => {
     if (!CONTRACT_ADDRESSES.ACCOUNT_REGISTRY) {
@@ -86,16 +88,19 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
           const tierPrices = await accountRegistry.getDomainTierPrices(name);
           const accountCount = await accountRegistry.getDomainAccountCount(name);
           let color = '00ffff'; // Default cyan
+          let textColor = '000000'; // Default black
           try {
             color = await hashdTag.domainColors(name) || '00ffff';
+            textColor = await hashdTag.domainTextColors(name) || '000000';
           } catch {
-            // Domain color not set
+            // Domain colors not set
           }
           return {
             name,
             tierPrices: Array.from(tierPrices),
             accountCount: Number(accountCount),
             color,
+            textColor,
           };
         })
       );
@@ -267,7 +272,11 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
 
   const handleUpdateColor = async (domain: string) => {
     if (editColor.length !== 6) {
-      toast.error('Color must be 6 hex characters');
+      toast.error('Background color must be 6 hex characters');
+      return;
+    }
+    if (editTextColor.length !== 6) {
+      toast.error('Text color must be 6 hex characters');
       return;
     }
 
@@ -281,15 +290,15 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       );
 
       toast.info('Submitting transaction...');
-      const tx = await hashdTag.setDomainColor(domain, editColor.toLowerCase());
+      const tx = await hashdTag.setDomainColor(domain, editColor.toLowerCase(), editTextColor.toLowerCase());
       await tx.wait();
       
-      toast.success('Domain color updated!');
+      toast.success('Domain colors updated!');
       setEditingDomain(null);
       fetchDomains();
     } catch (error: any) {
-      console.error('Error updating color:', error);
-      toast.error(error.reason || 'Failed to update color');
+      console.error('Error updating colors:', error);
+      toast.error(error.reason || 'Failed to update colors');
     }
   };
 
@@ -329,6 +338,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       setEditTierPricesUsd(['', '', '', '', '']);
     }
     setEditColor(domain.color);
+    setEditTextColor(domain.textColor);
   };
 
   const handleToggleFirstFree = async () => {
@@ -636,29 +646,60 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
                     </button>
                   </div>
 
-                  {/* Edit Color */}
+                  {/* Edit Colors */}
                   <div>
-                    <label className="block text-sm text-gray-400 mb-2">NFT Background Color</label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500">#</span>
-                      <input
-                        type="text"
-                        value={editColor}
-                        onChange={(e) => setEditColor(e.target.value.replace('#', ''))}
-                        maxLength={6}
-                        placeholder="00ffff"
-                        className="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
-                      />
-                      <div
-                        className="w-8 h-8 rounded border border-gray-600"
-                        style={{ backgroundColor: `#${editColor}` }}
-                      />
+                    <label className="block text-sm text-gray-400 mb-2">NFT Colors</label>
+                    <div className="space-y-2">
+                      {/* Background Color */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 text-sm w-24">Background:</span>
+                        <span className="text-gray-500">#</span>
+                        <input
+                          type="text"
+                          value={editColor}
+                          onChange={(e) => setEditColor(e.target.value.replace('#', ''))}
+                          maxLength={6}
+                          placeholder="00ffff"
+                          className="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                        />
+                        <div
+                          className="w-8 h-8 rounded border border-gray-600"
+                          style={{ backgroundColor: `#${editColor}` }}
+                        />
+                      </div>
+                      {/* Text Color */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 text-sm w-24">Text:</span>
+                        <span className="text-gray-500">#</span>
+                        <input
+                          type="text"
+                          value={editTextColor}
+                          onChange={(e) => setEditTextColor(e.target.value.replace('#', ''))}
+                          maxLength={6}
+                          placeholder="000000"
+                          className="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-cyan-500"
+                        />
+                        <div
+                          className="w-8 h-8 rounded border border-gray-600"
+                          style={{ backgroundColor: `#${editTextColor}` }}
+                        />
+                      </div>
+                      {/* Preview */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 text-sm w-24">Preview:</span>
+                        <div
+                          className="px-4 py-2 rounded border border-gray-600 font-mono text-sm"
+                          style={{ backgroundColor: `#${editColor}`, color: `#${editTextColor}` }}
+                        >
+                          alice@{domain.name}
+                        </div>
+                      </div>
                       <button
                         onClick={() => handleUpdateColor(domain.name)}
                         className="flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
                       >
                         <Palette size={14} />
-                        Save Color
+                        Save Colors
                       </button>
                     </div>
                   </div>
