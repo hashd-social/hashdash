@@ -1,7 +1,7 @@
 import React from 'react';
-import { Users, Globe, Percent, Wallet, FileCode, Sparkles } from 'lucide-react';
+import { Users, Globe, Percent, Wallet, FileCode, Sparkles, Database } from 'lucide-react';
 
-export type TabId = 'waitlist' | 'domains' | 'mint' | 'royalties' | 'treasury' | 'contracts';
+export type TabId = 'waitlist' | 'domains' | 'mint' | 'royalties' | 'treasury' | 'contracts' | 'vault';
 
 interface Tab {
   id: TabId;
@@ -16,6 +16,7 @@ const tabs: Tab[] = [
   { id: 'royalties', label: 'Royalties', icon: <Percent size={18} /> },
   { id: 'treasury', label: 'Treasury', icon: <Wallet size={18} /> },
   { id: 'contracts', label: 'Contracts', icon: <FileCode size={18} /> },
+  { id: 'vault', label: 'Vault', icon: <Database size={18} /> },
 ];
 
 interface TabNavigationProps {
