@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileCode, ExternalLink, Copy, Check, Database, Cpu } from 'lucide-react';
+import { FileCode, ExternalLink, Copy, Check, Database, Cpu, Coins } from 'lucide-react';
 import { useToast } from '../Toast';
 import { getAllContractInfo, NETWORK_CONFIG, ContractInfo } from '../../config/contracts';
 
@@ -8,6 +8,7 @@ export const ContractsTab: React.FC = () => {
   const [copiedAddress, setCopiedAddress] = React.useState<string | null>(null);
   
   const contracts = getAllContractInfo();
+  const tokenContracts = contracts.filter(c => c.type === 'token');
   const storageContracts = contracts.filter(c => c.type === 'storage');
   const logicContracts = contracts.filter(c => c.type === 'logic');
 
@@ -30,7 +31,9 @@ export const ContractsTab: React.FC = () => {
     <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {contract.type === 'storage' ? (
+          {contract.type === 'token' ? (
+            <Coins size={18} className="text-yellow-400" />
+          ) : contract.type === 'storage' ? (
             <Database size={18} className="text-purple-400" />
           ) : (
             <Cpu size={18} className="text-cyan-400" />
@@ -104,6 +107,25 @@ export const ContractsTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Token Contracts */}
+      {tokenContracts.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Coins size={20} className="text-yellow-400" />
+            <h3 className="text-lg font-medium text-white">Token Contracts</h3>
+            <span className="text-sm text-gray-500">({tokenContracts.length})</span>
+          </div>
+          <p className="text-gray-400 text-sm mb-4">
+            ERC20 utility tokens used for staking, rewards, and governance.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {tokenContracts.map((contract) => (
+              <ContractCard key={contract.name} contract={contract} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Storage Contracts */}
       <div>

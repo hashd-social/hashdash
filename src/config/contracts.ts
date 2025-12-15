@@ -1,5 +1,8 @@
 // Contract addresses from environment variables
 export const CONTRACT_ADDRESSES = {
+  // Token Contracts
+  HASHD_TOKEN: process.env.REACT_APP_HASHD_TOKEN || '',
+  
   // Storage Contracts (Eternal)
   MESSAGE_STORAGE: process.env.REACT_APP_MESSAGE_STORAGE || '',
   KEY_STORAGE: process.env.REACT_APP_KEY_STORAGE || '',
@@ -7,6 +10,10 @@ export const CONTRACT_ADDRESSES = {
   POST_STORAGE: process.env.REACT_APP_POST_STORAGE || '',
   USER_PROFILE_STORAGE: process.env.REACT_APP_USER_PROFILE_STORAGE || '',
   GROUP_FACTORY_STORAGE: process.env.REACT_APP_GROUP_FACTORY_STORAGE || '',
+  VAULT_REGISTRY_STORAGE: process.env.REACT_APP_VAULT_REGISTRY_STORAGE || '',
+  
+  // Platform Treasury (UUPS Upgradeable)
+  PLATFORM_TREASURY: process.env.REACT_APP_PLATFORM_TREASURY || '',
   
   // Logic Contracts (Upgradeable)
   KEY_REGISTRY: process.env.REACT_APP_KEY_REGISTRY || '',
@@ -19,6 +26,7 @@ export const CONTRACT_ADDRESSES = {
   BONDING_CURVE_DEPLOYER: process.env.REACT_APP_BONDING_CURVE_DEPLOYER || '',
   GROUP_FACTORY: process.env.REACT_APP_GROUP_FACTORY || '',
   DEPLOYMENT_REGISTRY: process.env.REACT_APP_DEPLOYMENT_REGISTRY || '',
+  VAULT_REGISTRY: process.env.REACT_APP_VAULT_REGISTRY || '',
 };
 
 // Network configuration
@@ -36,9 +44,9 @@ export const ACCOUNT_REGISTRY_ABI = [
   "function removeDomain(string domain)",
   "function withdrawFees()",
   
-  // First HashdTag free toggle (owner only)
-  "function setFirstHashdTagFreeEnabled(bool enabled)",
-  "function firstHashdTagFreeEnabled() view returns (bool)",
+  // First HashID free toggle (owner only)
+  "function setFirstHashIDFreeEnabled(bool enabled)",
+  "function firstHashIDFreeEnabled() view returns (bool)",
   
   // View functions
   "function getAvailableDomains() view returns (string[])",
@@ -50,13 +58,14 @@ export const ACCOUNT_REGISTRY_ABI = [
   "event DomainAdded(string domain, uint256 fee)",
   "event DomainRemoved(string domain)",
   "event DomainFeeUpdated(string domain, uint256 oldFee, uint256 newFee)",
-  "event FirstHashdTagFreeToggled(bool enabled)",
+  "event FirstHashIDFreeToggled(bool enabled)",
 ];
 
-export const HASHD_TAG_ABI = [
+export const HASHD_ID_ABI = [
   // Domain color management (owner only)
-  "function setDomainColor(string domain, string color)",
+  "function setDomainColor(string domain, string color, string textColor)",
   "function domainColors(string domain) view returns (string)",
+  "function domainTextColors(string domain) view returns (string)",
   
   // Royalty management (owner only)
   "function setRoyalty(address recipient, uint96 feeNumerator)",
@@ -74,7 +83,7 @@ export const HASHD_TAG_ABI = [
   
   // Events
   "event DomainColorUpdated(string indexed domain, string color)",
-  "event HashdTagMintedByOwner(address indexed to, uint256 indexed tokenId, string name, string domain)",
+  "event HashIDMintedByOwner(address indexed to, uint256 indexed tokenId, string name, string domain)",
 ];
 
 export const DEPLOYMENT_REGISTRY_ABI = [
@@ -87,12 +96,14 @@ export const DEPLOYMENT_REGISTRY_ABI = [
 export interface ContractInfo {
   name: string;
   address: string;
-  type: 'storage' | 'logic';
+  type: 'token' | 'storage' | 'logic';
 }
 
 // Helper to get all contract info for display
 export function getAllContractInfo(): ContractInfo[] {
   const contracts: ContractInfo[] = [
+    // Token contracts
+    { name: 'HASHD Token', address: CONTRACT_ADDRESSES.HASHD_TOKEN, type: 'token' as const },
     // Storage contracts
     { name: 'MessageStorage', address: CONTRACT_ADDRESSES.MESSAGE_STORAGE, type: 'storage' as const },
     { name: 'KeyStorage', address: CONTRACT_ADDRESSES.KEY_STORAGE, type: 'storage' as const },
@@ -100,10 +111,12 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'PostStorage', address: CONTRACT_ADDRESSES.POST_STORAGE, type: 'storage' as const },
     { name: 'UserProfileStorage', address: CONTRACT_ADDRESSES.USER_PROFILE_STORAGE, type: 'storage' as const },
     { name: 'GroupFactoryStorage', address: CONTRACT_ADDRESSES.GROUP_FACTORY_STORAGE, type: 'storage' as const },
+    { name: 'VaultNodeRegistryStorage', address: CONTRACT_ADDRESSES.VAULT_REGISTRY_STORAGE, type: 'storage' as const },
     // Logic contracts
     { name: 'KeyRegistry', address: CONTRACT_ADDRESSES.KEY_REGISTRY, type: 'logic' as const },
     { name: 'AccountRegistry', address: CONTRACT_ADDRESSES.ACCOUNT_REGISTRY, type: 'logic' as const },
-    { name: 'HashdTag', address: CONTRACT_ADDRESSES.HASHD_TAG, type: 'logic' as const },
+    { name: 'HashID', address: CONTRACT_ADDRESSES.HASHD_TAG, type: 'logic' as const },
+    { name: 'PlatformTreasury', address: CONTRACT_ADDRESSES.PLATFORM_TREASURY, type: 'logic' as const },
     { name: 'MessageContract', address: CONTRACT_ADDRESSES.MESSAGE_CONTRACT, type: 'logic' as const },
     { name: 'UserProfile', address: CONTRACT_ADDRESSES.USER_PROFILE, type: 'logic' as const },
     { name: 'GroupPostsDeployer', address: CONTRACT_ADDRESSES.GROUP_POSTS_DEPLOYER, type: 'logic' as const },
@@ -111,6 +124,7 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'BondingCurveDeployer', address: CONTRACT_ADDRESSES.BONDING_CURVE_DEPLOYER, type: 'logic' as const },
     { name: 'GroupFactory', address: CONTRACT_ADDRESSES.GROUP_FACTORY, type: 'logic' as const },
     { name: 'DeploymentRegistry', address: CONTRACT_ADDRESSES.DEPLOYMENT_REGISTRY, type: 'logic' as const },
+    { name: 'VaultNodeRegistryV1', address: CONTRACT_ADDRESSES.VAULT_REGISTRY, type: 'logic' as const },
   ];
   return contracts.filter(c => c.address);
 }

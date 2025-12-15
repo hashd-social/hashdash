@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { Plus, Trash2, Edit2, Save, X, Palette, RefreshCw, Gift, DollarSign, ArrowDown } from 'lucide-react';
 import { useToast } from '../Toast';
-import { CONTRACT_ADDRESSES, ACCOUNT_REGISTRY_ABI, HASHD_TAG_ABI } from '../../config/contracts';
+import { CONTRACT_ADDRESSES, ACCOUNT_REGISTRY_ABI, HASHD_ID_ABI } from '../../config/contracts';
 
 // Chainlink ETH/USD Price Feed on Ethereum Mainnet
 const CHAINLINK_ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
@@ -49,32 +49,48 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
   const [editTextColor, setEditTextColor] = useState('');
 
   const fetchDomains = useCallback(async () => {
+    console.log('🚀 fetchDomains called');
+    console.log('CONTRACT_ADDRESSES.ACCOUNT_REGISTRY:', CONTRACT_ADDRESSES.ACCOUNT_REGISTRY);
+    console.log('userAddress:', userAddress);
+    
     if (!CONTRACT_ADDRESSES.ACCOUNT_REGISTRY) {
+      console.log('❌ No ACCOUNT_REGISTRY address');
       setLoading(false);
       return;
     }
 
     try {
+      console.log('📡 Creating provider...');
       const provider = new ethers.BrowserProvider(window.ethereum);
+      const network = await provider.getNetwork();
+      console.log('Network:', network.chainId.toString(), network.name);
+      
       const accountRegistry = new ethers.Contract(
         CONTRACT_ADDRESSES.ACCOUNT_REGISTRY,
         ACCOUNT_REGISTRY_ABI,
         provider
       );
-      const hashdTag = new ethers.Contract(
+      
+      const code = await provider.getCode(CONTRACT_ADDRESSES.ACCOUNT_REGISTRY);
+      console.log('Contract code length:', code.length, 'bytes');
+      const hashID = new ethers.Contract(
         CONTRACT_ADDRESSES.HASHD_TAG,
-        HASHD_TAG_ABI,
+        HASHD_ID_ABI,
         provider
       );
 
       // Check ownership
       const owner = await accountRegistry.owner();
       const ownerMatch = owner.toLowerCase() === userAddress.toLowerCase();
+      console.log('🔍 OWNERSHIP CHECK:');
+      console.log('  Contract owner:', owner);
+      console.log('  Your address:', userAddress);
+      console.log('  Match:', ownerMatch);
       setIsOwner(ownerMatch);
 
       // Get first free enabled status
       try {
-        const freeEnabled = await accountRegistry.firstHashdTagFreeEnabled();
+        const freeEnabled = await accountRegistry.firstHashIDFreeEnabled();
         setFirstFreeEnabled(freeEnabled);
       } catch {
         // Function may not exist on older contracts
@@ -90,8 +106,8 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
           let color = '00ffff'; // Default cyan
           let textColor = '000000'; // Default black
           try {
-            color = await hashdTag.domainColors(name) || '00ffff';
-            textColor = await hashdTag.domainTextColors(name) || '000000';
+            color = await hashID.domainColors(name) || '00ffff';
+            textColor = await hashID.domainTextColors(name) || '000000';
           } catch {
             // Domain colors not set
           }
@@ -112,7 +128,8 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
     } finally {
       setLoading(false);
     }
-  }, [userAddress, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress]);
 
   useEffect(() => {
     fetchDomains();
@@ -139,7 +156,8 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
     } finally {
       setFetchingPrice(false);
     }
-  }, [toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Convert USD to ETH
   const usdToEth = (usd: number, price: number): string => {
@@ -283,14 +301,14 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
-      const hashdTag = new ethers.Contract(
+      const hashID = new ethers.Contract(
         CONTRACT_ADDRESSES.HASHD_TAG,
-        HASHD_TAG_ABI,
+        HASHD_ID_ABI,
         signer
       );
 
       toast.info('Submitting transaction...');
-      const tx = await hashdTag.setDomainColor(domain, editColor.toLowerCase(), editTextColor.toLowerCase());
+      const tx = await hashID.setDomainColor(domain, editColor.toLowerCase(), editTextColor.toLowerCase());
       await tx.wait();
       
       toast.success('Domain colors updated!');
@@ -353,12 +371,12 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       );
 
       const newValue = !firstFreeEnabled;
-      toast.info(`${newValue ? 'Enabling' : 'Disabling'} free first HashdTag...`);
-      const tx = await accountRegistry.setFirstHashdTagFreeEnabled(newValue);
+      toast.info(`${newValue ? 'Enabling' : 'Disabling'} free first HashID...`);
+      const tx = await accountRegistry.setFirstHashIDFreeEnabled(newValue);
       await tx.wait();
       
       setFirstFreeEnabled(newValue);
-      toast.success(`Free first HashdTag ${newValue ? 'enabled' : 'disabled'}!`);
+      toast.success(`Free first HashID ${newValue ? 'enabled' : 'disabled'}!`);
     } catch (error: any) {
       console.error('Error toggling first free:', error);
       toast.error(error.reason || 'Failed to toggle setting');
@@ -391,7 +409,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white">Domain Management</h2>
-          <p className="text-gray-400 text-sm">Manage HashdTag domains and tier pricing</p>
+          <p className="text-gray-400 text-sm">Manage HashID domains and tier pricing</p>
         </div>
         {isOwner && (
           <button
@@ -429,17 +447,17 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
         </button>
       </div>
 
-      {/* First Free HashdTag Toggle */}
+      {/* First Free HashID Toggle */}
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Gift className={`${firstFreeEnabled ? 'text-green-400' : 'text-gray-500'}`} size={24} />
             <div>
-              <h3 className="text-white font-medium">Free First HashdTag</h3>
+              <h3 className="text-white font-medium">Free First HashID</h3>
               <p className="text-sm text-gray-400">
                 {firstFreeEnabled 
-                  ? 'New users get their first 5+ character HashdTag for free'
-                  : 'All HashdTag registrations require payment'}
+                  ? 'New users get their first 5+ character HashID for free'
+                  : 'All HashID registrations require payment'}
               </p>
             </div>
           </div>

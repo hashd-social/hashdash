@@ -62,7 +62,8 @@ export const WaitlistTab: React.FC<WaitlistTabProps> = ({ userAddress, signature
     } finally {
       setLoading(false);
     }
-  }, [userAddress, signature, message, page, statusFilter, search, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress, signature, message, page, statusFilter, search]);
 
   useEffect(() => {
     fetchWaitlist();

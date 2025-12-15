@@ -1,28 +1,36 @@
 import React, { useState, useEffect } from 'react';
+import { ethers } from 'ethers';
 import { 
   Database, 
-  Trash2, 
   RefreshCw, 
   Server, 
-  Settings, 
   Activity,
-  AlertTriangle,
   CheckCircle,
-  XCircle
+  XCircle,
+  AlertCircle
 } from 'lucide-react';
 
-interface VaultStats {
+interface NodeInfo {
+  nodeId: string;
+  owner: string;
+  url: string;
+  active: boolean;
+}
+
+interface NodeHealth {
   status: string;
-  version: string;
-  uptime: number;
   storedBlobs: number;
   totalSize: number;
-  peers: number;
-  metrics: {
-    requestsLastHour: number;
-    successRate: number;
-    avgResponseTime: number;
-  };
+  successRate: number;
+}
+
+interface NetworkStats {
+  totalNodes: number;
+  activeNodes: number;
+  totalBlobs: number;
+  totalSize: number;
+  avgSuccessRate: number;
+  healthyNodes: number;
 }
 
 interface GCStatus {
@@ -36,90 +44,127 @@ interface GCStatus {
   };
 }
 
-const VAULT_API_URL = process.env.REACT_APP_VAULT_API_URL || 'http://hashd.local:3004';
+interface ReplicationStats {
+  totalBlobs: number;
+  completeReplications: number;
+  incompleteReplications: number;
+  avgReplicationFactor: number;
+}
+
+const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY;
+
+// ABI for VaultNodeRegistryV1
+const VAULT_REGISTRY_ABI = [
+  'function getActiveNodes() external view returns (bytes32[])',
+  'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string url, bytes32 metadataHash, uint256 registeredAt, bool active))',
+  'function getNodeCount() external view returns (uint256 total, uint256 active)'
+];
 
 export const VaultTab: React.FC = () => {
-  const [stats, setStats] = useState<VaultStats | null>(null);
-  const [gcStatus, setGCStatus] = useState<GCStatus | null>(null);
+  const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
+  const [nodes, setNodes] = useState<NodeInfo[]>([]);
+  const [replicationStats, setReplicationStats] = useState<ReplicationStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [purging, setPurging] = useState(false);
-  const [runningGC, setRunningGC] = useState(false);
 
-  const fetchStats = async () => {
+  const fetchNetworkStats = async () => {
     try {
-      const response = await fetch(`${VAULT_API_URL}/health`);
-      const data = await response.json();
-      setStats(data);
-    } catch (error) {
-      console.error('Failed to fetch vault stats:', error);
-    }
-  };
+      if (!VAULT_REGISTRY_ADDRESS) {
+        console.error('REACT_APP_VAULT_REGISTRY not configured');
+        return;
+      }
 
-  const fetchGCStatus = async () => {
-    try {
-      const response = await fetch(`${VAULT_API_URL}/gc/status`);
-      const data = await response.json();
-      setGCStatus(data);
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, provider);
+
+      // Get node counts from registry
+      const [total, active] = await contract.getNodeCount();
+      const totalNodes = Number(total);
+      const activeNodes = Number(active);
+
+      // Get all active nodes
+      const nodeIds = await contract.getActiveNodes();
+      
+      // Fetch details for each node
+      const nodeDetails: NodeInfo[] = await Promise.all(
+        nodeIds.map(async (nodeId: string) => {
+          const node = await contract.getNode(nodeId);
+          return {
+            nodeId,
+            owner: node[0],
+            url: node[2],
+            active: node[5]
+          };
+        })
+      );
+
+      setNodes(nodeDetails);
+
+      // Fetch health stats from each active node
+      const healthPromises = nodeDetails.map(async (node) => {
+        try {
+          const response = await fetch(`${node.url}/health`, { 
+            signal: AbortSignal.timeout(3000) 
+          });
+          const data = await response.json();
+          return {
+            status: data.status,
+            storedBlobs: data.storedBlobs || 0,
+            totalSize: data.totalSize || 0,
+            successRate: data.metrics?.successRate || 0
+          };
+        } catch (error) {
+          return {
+            status: 'unhealthy',
+            storedBlobs: 0,
+            totalSize: 0,
+            successRate: 0
+          };
+        }
+      });
+
+      const healthStats = await Promise.all(healthPromises);
+
+      // Aggregate network stats
+      const totalBlobs = healthStats.reduce((sum, h) => sum + h.storedBlobs, 0);
+      const totalSize = healthStats.reduce((sum, h) => sum + h.totalSize, 0);
+      const healthyNodes = healthStats.filter(h => h.status === 'healthy').length;
+      const avgSuccessRate = healthStats.length > 0
+        ? healthStats.reduce((sum, h) => sum + h.successRate, 0) / healthStats.length
+        : 0;
+
+      setNetworkStats({
+        totalNodes,
+        activeNodes,
+        totalBlobs,
+        totalSize,
+        avgSuccessRate,
+        healthyNodes
+      });
+
+      // Fetch replication stats from first healthy node
+      const healthyNode = nodeDetails.find((_, i) => healthStats[i].status === 'healthy');
+      if (healthyNode) {
+        try {
+          const response = await fetch(`${healthyNode.url}/replication/stats`);
+          const data = await response.json();
+          setReplicationStats(data);
+        } catch (error) {
+          console.error('Failed to fetch replication stats:', error);
+        }
+      }
+
     } catch (error) {
-      console.error('Failed to fetch GC status:', error);
+      console.error('Failed to fetch network stats:', error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStats();
-    fetchGCStatus();
-    const interval = setInterval(() => {
-      fetchStats();
-      fetchGCStatus();
-    }, 5000);
+    fetchNetworkStats();
+    const interval = setInterval(fetchNetworkStats, 10000); // Every 10 seconds
     return () => clearInterval(interval);
   }, []);
-
-  const handlePurgeAll = async () => {
-    if (!window.confirm('⚠️ WARNING: This will delete ALL blobs and metadata. This action cannot be undone. Continue?')) {
-      return;
-    }
-
-    setPurging(true);
-    try {
-      // Get all blobs
-      const response = await fetch(`${VAULT_API_URL}/blobs`);
-      const { blobs } = await response.json();
-
-      // Delete each blob
-      for (const blob of blobs) {
-        await fetch(`${VAULT_API_URL}/blob/${blob.cid}`, {
-          method: 'DELETE'
-        });
-      }
-
-      alert(`✅ Purged ${blobs.length} blobs`);
-      fetchStats();
-    } catch (error) {
-      alert(`❌ Purge failed: ${error}`);
-    } finally {
-      setPurging(false);
-    }
-  };
-
-  const handleRunGC = async () => {
-    setRunningGC(true);
-    try {
-      const response = await fetch(`${VAULT_API_URL}/admin/gc`, {
-        method: 'POST'
-      });
-      const result = await response.json();
-      alert(`✅ GC completed: ${result.deleted} blobs deleted, ${formatBytes(result.freedBytes)} freed`);
-      fetchStats();
-      fetchGCStatus();
-    } catch (error) {
-      alert(`❌ GC failed: ${error}`);
-    } finally {
-      setRunningGC(false);
-    }
-  };
 
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 B';
@@ -150,49 +195,39 @@ export const VaultTab: React.FC = () => {
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             <Database className="text-cyan-400" size={28} />
-            Vault Node Management
+            ByteCave Network Overview
           </h2>
-          <p className="text-gray-400 mt-1">Monitor and manage your HASHD vault node</p>
+          <p className="text-gray-400 mt-1">Aggregated statistics across all ByteCave storage nodes</p>
         </div>
         <div className="flex items-center gap-2">
-          {stats?.status === 'healthy' ? (
+          {networkStats && networkStats.healthyNodes > 0 ? (
             <CheckCircle className="text-green-400" size={24} />
           ) : (
-            <XCircle className="text-red-400" size={24} />
+            <AlertCircle className="text-yellow-400" size={24} />
           )}
-          <span className="text-sm text-gray-400">v{stats?.version}</span>
+          <span className="text-sm text-gray-400">{networkStats?.activeNodes || 0} active nodes</span>
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Network Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Stored Blobs</p>
-              <p className="text-2xl font-bold text-white mt-1">{stats?.storedBlobs || 0}</p>
+              <p className="text-gray-400 text-sm">Total Nodes</p>
+              <p className="text-2xl font-bold text-white mt-1">{networkStats?.totalNodes || 0}</p>
+              <p className="text-xs text-gray-500 mt-1">{networkStats?.activeNodes || 0} active</p>
             </div>
-            <Database className="text-cyan-400" size={32} />
+            <Server className="text-cyan-400" size={32} />
           </div>
         </div>
 
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Total Size</p>
-              <p className="text-2xl font-bold text-white mt-1">{formatBytes(stats?.totalSize || 0)}</p>
-            </div>
-            <Server className="text-purple-400" size={32} />
-          </div>
-        </div>
-
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-gray-400 text-sm">Success Rate</p>
-              <p className="text-2xl font-bold text-white mt-1">
-                {((stats?.metrics.successRate || 0) * 100).toFixed(1)}%
-              </p>
+              <p className="text-gray-400 text-sm">Network Health</p>
+              <p className="text-2xl font-bold text-white mt-1">{networkStats?.healthyNodes || 0}</p>
+              <p className="text-xs text-gray-500 mt-1">healthy nodes</p>
             </div>
             <Activity className="text-green-400" size={32} />
           </div>
@@ -201,122 +236,72 @@ export const VaultTab: React.FC = () => {
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Uptime</p>
-              <p className="text-2xl font-bold text-white mt-1">{formatUptime(stats?.uptime || 0)}</p>
+              <p className="text-gray-400 text-sm">Total Blobs</p>
+              <p className="text-2xl font-bold text-white mt-1">{networkStats?.totalBlobs || 0}</p>
+              <p className="text-xs text-gray-500 mt-1">across network</p>
             </div>
-            <CheckCircle className="text-cyan-400" size={32} />
+            <Database className="text-purple-400" size={32} />
+          </div>
+        </div>
+
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-400 text-sm">Total Storage</p>
+              <p className="text-2xl font-bold text-white mt-1">{formatBytes(networkStats?.totalSize || 0)}</p>
+              <p className="text-xs text-gray-500 mt-1">network-wide</p>
+            </div>
+            <Server className="text-cyan-400" size={32} />
           </div>
         </div>
       </div>
 
-      {/* Storage Management */}
+      {/* Network Performance */}
       <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <Database size={20} className="text-cyan-400" />
-          Storage Management
+          <Activity size={20} className="text-cyan-400" />
+          Network Performance
         </h3>
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 bg-gray-900 rounded-lg">
-            <div>
-              <p className="text-white font-medium">Purge All Data</p>
-              <p className="text-sm text-gray-400 mt-1">
-                Delete all blobs and metadata from this node
-              </p>
-            </div>
-            <button
-              onClick={handlePurgeAll}
-              disabled={purging}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-            >
-              {purging ? (
-                <RefreshCw size={18} className="animate-spin" />
-              ) : (
-                <Trash2 size={18} />
-              )}
-              {purging ? 'Purging...' : 'Purge All'}
-            </button>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Avg Success Rate</p>
+            <p className="text-2xl font-bold text-white mt-1">
+              {((networkStats?.avgSuccessRate || 0) * 100).toFixed(1)}%
+            </p>
           </div>
-
-          <div className="p-4 bg-yellow-900/20 border border-yellow-700/50 rounded-lg flex items-start gap-3">
-            <AlertTriangle className="text-yellow-400 flex-shrink-0 mt-0.5" size={20} />
-            <div>
-              <p className="text-yellow-400 font-medium">Warning</p>
-              <p className="text-sm text-yellow-200/80 mt-1">
-                Purging data is permanent and cannot be undone. Make sure you have backups if needed.
-              </p>
-            </div>
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Active / Total Nodes</p>
+            <p className="text-2xl font-bold text-white mt-1">
+              {networkStats?.activeNodes || 0} / {networkStats?.totalNodes || 0}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Garbage Collection */}
+      {/* Replication Stats */}
       <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <RefreshCw size={20} className="text-cyan-400" />
-          Garbage Collection
+          Replication Status
         </h3>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
-            <div className="p-4 bg-gray-900 rounded-lg">
-              <p className="text-gray-400 text-sm">Blobs Checked</p>
-              <p className="text-xl font-bold text-white mt-1">{gcStatus?.stats.checked || 0}</p>
-            </div>
-            <div className="p-4 bg-gray-900 rounded-lg">
-              <p className="text-gray-400 text-sm">Blobs Deleted</p>
-              <p className="text-xl font-bold text-white mt-1">{gcStatus?.stats.deleted || 0}</p>
-            </div>
-            <div className="p-4 bg-gray-900 rounded-lg">
-              <p className="text-gray-400 text-sm">Space Freed</p>
-              <p className="text-xl font-bold text-white mt-1">
-                {formatBytes(gcStatus?.stats.freedBytes || 0)}
-              </p>
-            </div>
+        <div className="grid grid-cols-4 gap-4">
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Total Blobs</p>
+            <p className="text-2xl font-bold text-white mt-1">{replicationStats?.totalBlobs || 0}</p>
           </div>
-
-          <div className="flex items-center justify-between p-4 bg-gray-900 rounded-lg">
-            <div>
-              <p className="text-white font-medium">Run Garbage Collection</p>
-              <p className="text-sm text-gray-400 mt-1">
-                Manually trigger GC to clean up old blobs
-              </p>
-            </div>
-            <button
-              onClick={handleRunGC}
-              disabled={runningGC}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-            >
-              <RefreshCw size={18} className={runningGC ? 'animate-spin' : ''} />
-              {runningGC ? 'Running...' : 'Run GC'}
-            </button>
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Complete</p>
+            <p className="text-2xl font-bold text-green-400 mt-1">{replicationStats?.completeReplications || 0}</p>
           </div>
-        </div>
-      </div>
-
-      {/* Node Configuration */}
-      <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <Settings size={20} className="text-cyan-400" />
-          Node Configuration
-        </h3>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
-            <span className="text-gray-400">Node URL</span>
-            <span className="text-white font-mono text-sm">{VAULT_API_URL}</span>
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Incomplete</p>
+            <p className="text-2xl font-bold text-yellow-400 mt-1">{replicationStats?.incompleteReplications || 0}</p>
           </div>
-          <div className="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
-            <span className="text-gray-400">Connected Peers</span>
-            <span className="text-white font-mono text-sm">{stats?.peers || 0}</span>
-          </div>
-          <div className="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
-            <span className="text-gray-400">Requests (Last Hour)</span>
-            <span className="text-white font-mono text-sm">{stats?.metrics.requestsLastHour || 0}</span>
-          </div>
-          <div className="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
-            <span className="text-gray-400">Avg Response Time</span>
-            <span className="text-white font-mono text-sm">{stats?.metrics.avgResponseTime || 0}ms</span>
+          <div className="p-4 bg-gray-900 rounded-lg">
+            <p className="text-gray-400 text-sm">Avg Replication Factor</p>
+            <p className="text-2xl font-bold text-cyan-400 mt-1">{replicationStats?.avgReplicationFactor?.toFixed(1) || '0.0'}</p>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { Sparkles, CheckCircle, XCircle, RefreshCw, AlertCircle } from 'lucide-react';
 import { useToast } from '../Toast';
-import { CONTRACT_ADDRESSES, ACCOUNT_REGISTRY_ABI, HASHD_TAG_ABI } from '../../config/contracts';
+import { CONTRACT_ADDRESSES, ACCOUNT_REGISTRY_ABI, HASHD_ID_ABI } from '../../config/contracts';
 
 interface MintTabProps {
   userAddress: string;
@@ -16,7 +16,7 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
   
   // Form state
   const [recipientAddress, setRecipientAddress] = useState('');
-  const [hashdTagName, setHashdTagName] = useState('');
+  const [hashIDName, setHashIDName] = useState('');
   const [selectedDomain, setSelectedDomain] = useState('');
   const [minting, setMinting] = useState(false);
   
@@ -38,14 +38,14 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
         ACCOUNT_REGISTRY_ABI,
         provider
       );
-      const hashdTag = new ethers.Contract(
+      const hashID = new ethers.Contract(
         CONTRACT_ADDRESSES.HASHD_TAG,
-        HASHD_TAG_ABI,
+        HASHD_ID_ABI,
         provider
       );
 
       // Check ownership
-      const owner = await hashdTag.owner();
+      const owner = await hashID.owner();
       setIsOwner(owner.toLowerCase() === userAddress.toLowerCase());
 
       // Get available domains
@@ -60,7 +60,8 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
     } finally {
       setLoading(false);
     }
-  }, [userAddress, selectedDomain, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress, selectedDomain]);
 
   useEffect(() => {
     fetchData();
@@ -77,14 +78,14 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
 
   // Check name availability with debounce
   useEffect(() => {
-    if (!hashdTagName || !selectedDomain) {
+    if (!hashIDName || !selectedDomain) {
       setNameAvailable(null);
       return;
     }
 
     // Validate name format locally first
-    const isValidFormat = /^[a-z0-9_]+$/.test(hashdTagName);
-    if (!isValidFormat || hashdTagName.length > 15) {
+    const isValidFormat = /^[a-z0-9_]+$/.test(hashIDName);
+    if (!isValidFormat || hashIDName.length > 15) {
       setNameAvailable(false);
       return;
     }
@@ -93,12 +94,12 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
     const timeoutId = setTimeout(async () => {
       try {
         const provider = new ethers.BrowserProvider(window.ethereum);
-        const hashdTag = new ethers.Contract(
+        const hashID = new ethers.Contract(
           CONTRACT_ADDRESSES.HASHD_TAG,
-          HASHD_TAG_ABI,
+          HASHD_ID_ABI,
           provider
         );
-        const available = await hashdTag.isNameAvailable(hashdTagName, selectedDomain);
+        const available = await hashID.isNameAvailable(hashIDName, selectedDomain);
         setNameAvailable(available);
       } catch (error) {
         console.error('Error checking name:', error);
@@ -109,10 +110,10 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [hashdTagName, selectedDomain]);
+  }, [hashIDName, selectedDomain]);
 
   const handleMint = async () => {
-    if (!recipientAddress || !hashdTagName || !selectedDomain || !addressValid || !nameAvailable) {
+    if (!recipientAddress || !hashIDName || !selectedDomain || !addressValid || !nameAvailable) {
       return;
     }
 
@@ -120,24 +121,24 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
-      const hashdTag = new ethers.Contract(
+      const hashID = new ethers.Contract(
         CONTRACT_ADDRESSES.HASHD_TAG,
-        HASHD_TAG_ABI,
+        HASHD_ID_ABI,
         signer
       );
 
       toast.info('Submitting mint transaction...');
-      const tx = await hashdTag.ownerMint(recipientAddress, hashdTagName, selectedDomain);
+      const tx = await hashID.ownerMint(recipientAddress, hashIDName, selectedDomain);
       await tx.wait();
 
-      toast.success(`Minted ${hashdTagName}@${selectedDomain} to ${recipientAddress.slice(0, 6)}...${recipientAddress.slice(-4)}!`);
+      toast.success(`Minted ${hashIDName}@${selectedDomain} to ${recipientAddress.slice(0, 6)}...${recipientAddress.slice(-4)}!`);
       
       // Reset form
-      setHashdTagName('');
+      setHashIDName('');
       setNameAvailable(null);
     } catch (error: any) {
       console.error('Error minting:', error);
-      toast.error(error.reason || 'Failed to mint HashdTag');
+      toast.error(error.reason || 'Failed to mint HashID');
     } finally {
       setMinting(false);
     }
@@ -168,7 +169,7 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-semibold text-white">Owner Mint</h2>
-          <p className="text-gray-400 text-sm">Mint HashdTags for free to any address</p>
+          <p className="text-gray-400 text-sm">Mint HashIDs for free to any address</p>
         </div>
         <div className="bg-yellow-900/20 border border-yellow-600 rounded-lg p-4 text-yellow-400">
           <AlertCircle className="inline mr-2" size={18} />
@@ -186,13 +187,13 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
           <Sparkles className="text-purple-400" size={24} />
           Owner Mint
         </h2>
-        <p className="text-gray-400 text-sm">Mint HashdTags for free to any address (owner only)</p>
+        <p className="text-gray-400 text-sm">Mint HashIDs for free to any address (owner only)</p>
       </div>
 
       {/* Info Box */}
       <div className="bg-purple-900/20 border border-purple-600 rounded-lg p-4">
         <p className="text-purple-300 text-sm">
-          <strong>Free Minting:</strong> As the contract owner, you can mint HashdTags to any wallet address 
+          <strong>Free Minting:</strong> As the contract owner, you can mint HashIDs to any wallet address 
           without paying fees. This is useful for airdrops, rewards, or reserving names.
         </p>
       </div>
@@ -234,19 +235,19 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
             )}
           </div>
 
-          {/* HashdTag Name */}
+          {/* HashID Name */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">HashdTag Name *</label>
+            <label className="block text-sm text-gray-400 mb-1">HashID Name *</label>
             <div className="relative">
               <input
                 type="text"
-                value={hashdTagName}
-                onChange={(e) => setHashdTagName(e.target.value.toLowerCase())}
+                value={hashIDName}
+                onChange={(e) => setHashIDName(e.target.value.toLowerCase())}
                 placeholder="alice"
                 maxLength={15}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono focus:outline-none focus:border-cyan-500"
               />
-              {hashdTagName && (
+              {hashIDName && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
                   {checkingName ? (
                     <RefreshCw className="text-cyan-400 animate-spin" size={18} />
@@ -261,11 +262,11 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
             <p className="text-gray-500 text-xs mt-1">
               Lowercase letters, numbers, and underscores only. Max 15 characters.
             </p>
-            {hashdTagName && nameAvailable === false && (
+            {hashIDName && nameAvailable === false && (
               <p className="text-red-400 text-xs mt-1">
-                {!/^[a-z0-9_]+$/.test(hashdTagName) 
+                {!/^[a-z0-9_]+$/.test(hashIDName) 
                   ? 'Invalid format: only lowercase letters, numbers, and underscores allowed'
-                  : hashdTagName.length > 15
+                  : hashIDName.length > 15
                   ? 'Name too long (max 15 characters)'
                   : 'Name already taken'}
               </p>
@@ -289,11 +290,11 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
           </div>
 
           {/* Preview */}
-          {hashdTagName && selectedDomain && (
+          {hashIDName && selectedDomain && (
             <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-600">
               <span className="text-gray-400 text-sm">Preview:</span>
               <p className="text-2xl font-bold text-cyan-400 font-mono">
-                {hashdTagName}@{selectedDomain}
+                {hashIDName}@{selectedDomain}
               </p>
             </div>
           )}
@@ -301,7 +302,7 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
           {/* Mint Button */}
           <button
             onClick={handleMint}
-            disabled={!recipientAddress || !hashdTagName || !selectedDomain || !addressValid || !nameAvailable || minting}
+            disabled={!recipientAddress || !hashIDName || !selectedDomain || !addressValid || !nameAvailable || minting}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
           >
             {minting ? (
@@ -312,7 +313,7 @@ export const MintTab: React.FC<MintTabProps> = ({ userAddress }) => {
             ) : (
               <>
                 <Sparkles size={18} />
-                Mint HashdTag (Free)
+                Mint HashID (Free)
               </>
             )}
           </button>

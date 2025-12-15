@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useToast } from './Toast';
 import { WelcomeScreen } from './dashboard/WelcomeScreen';
@@ -11,6 +11,7 @@ import { RoyaltiesTab } from './dashboard/RoyaltiesTab';
 import { TreasuryTab } from './dashboard/TreasuryTab';
 import { ContractsTab } from './dashboard/ContractsTab';
 import { VaultTab } from './dashboard/VaultTab';
+import NodesTab from './dashboard/NodesTab';
 
 declare global {
   interface Window {
@@ -26,6 +27,51 @@ export const Dashboard: React.FC = () => {
   const [signature, setSignature] = useState('');
   const [message, setMessage] = useState('');
   const [activeTab, setActiveTab] = useState<TabId>('waitlist');
+
+  // Auto-reconnect on page load
+  useEffect(() => {
+    const reconnect = async () => {
+      if (!window.ethereum) return;
+      
+      try {
+        const accounts = await window.ethereum.request({ 
+          method: 'eth_accounts' 
+        }) as string[];
+        
+        if (accounts.length > 0) {
+          setUserAddress(accounts[0]);
+        }
+      } catch (error) {
+        console.error('Auto-reconnect failed:', error);
+      }
+    };
+    
+    reconnect();
+  }, []);
+
+  // Listen for account changes
+  useEffect(() => {
+    if (!window.ethereum) return;
+
+    const handleAccountsChanged = (accounts: string[]) => {
+      if (accounts.length === 0) {
+        setUserAddress('');
+        setIsAuthenticated(false);
+        setSignature('');
+        setMessage('');
+      } else if (accounts[0] !== userAddress) {
+        setUserAddress(accounts[0]);
+        setIsAuthenticated(false);
+        setSignature('');
+        setMessage('');
+      }
+    };
+
+    window.ethereum.on('accountsChanged', handleAccountsChanged);
+    return () => {
+      window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+    };
+  }, [userAddress]);
 
   const authenticate = async () => {
     setIsAuthenticating(true);
@@ -84,6 +130,8 @@ export const Dashboard: React.FC = () => {
         return <ContractsTab />;
       case 'vault':
         return <VaultTab />;
+      case 'nodes':
+        return <NodesTab />;
       default:
         return null;
     }
