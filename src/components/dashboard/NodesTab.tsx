@@ -187,11 +187,23 @@ export default function NodesTab() {
       const contract = new ethers.Contract(registryAddress, VAULT_REGISTRY_ABI, signer);
 
       // Convert metadata to bytes32
-      const metadataHash = ethers.id(formData.metadata);
+      const metadataHash = ethers.id(formData.metadata || 'default');
+
+      // Ensure public key is properly formatted as bytes
+      const publicKeyBytes = formData.publicKey.startsWith('0x') 
+        ? formData.publicKey 
+        : `0x${formData.publicKey}`;
+
+      console.log('Adding node with:', {
+        owner: formData.ownerAddress,
+        publicKey: publicKeyBytes,
+        url: formData.url,
+        metadataHash
+      });
 
       const tx = await contract.addNode(
         formData.ownerAddress,
-        formData.publicKey,
+        publicKeyBytes,
         formData.url,
         metadataHash
       );
@@ -201,7 +213,9 @@ export default function NodesTab() {
       alert('Node added successfully!');
       setShowAddForm(false);
       setFormData({ ownerAddress: '', publicKey: '', url: '', metadata: '' });
-      loadNodes();
+      
+      // Refresh nodes after transaction is confirmed
+      setTimeout(() => loadNodes(), 500);
     } catch (error: any) {
       console.error('Error adding node:', error);
       alert(`Error: ${error.message}`);
@@ -351,6 +365,9 @@ export default function NodesTab() {
 
       setStorageResult({ cid: result.cid });
       alert(`✅ Successfully stored!\nCID: ${result.cid}`);
+      
+      // Refresh node stats after successful storage (small delay to ensure vault has updated)
+      setTimeout(() => loadNodes(), 500);
     } catch (error: any) {
       console.error('Storage error:', error);
       setStorageResult({ error: error.message });

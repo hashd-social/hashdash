@@ -11,7 +11,6 @@ import { RoyaltiesTab } from './dashboard/RoyaltiesTab';
 import { TreasuryTab } from './dashboard/TreasuryTab';
 import { ContractsTab } from './dashboard/ContractsTab';
 import { VaultTab } from './dashboard/VaultTab';
-import NodesTab from './dashboard/NodesTab';
 
 declare global {
   interface Window {
@@ -130,8 +129,6 @@ export const Dashboard: React.FC = () => {
         return <ContractsTab />;
       case 'vault':
         return <VaultTab />;
-      case 'nodes':
-        return <NodesTab />;
       default:
         return null;
     }
