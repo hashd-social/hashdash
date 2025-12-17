@@ -1,18 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
+import { useByteCave } from '../../hooks/useByteCave';
 import { 
   Database, 
   RefreshCw, 
   Server, 
-  Activity,
   CheckCircle,
   AlertCircle,
   Plus,
-  MessageSquare,
-  FileText,
-  Image,
-  ShoppingBag
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 // Interfaces
@@ -35,6 +33,7 @@ interface NodeHealth {
   peers: number;
   requestsLastHour: number;
   avgResponseTime: number;
+  peerId?: string;
   integrity?: {
     checked: number;
     passed: number;
@@ -84,6 +83,16 @@ const VAULT_REGISTRY_ABI = [
 ];
 
 export const VaultTab: React.FC = () => {
+  // P2P WebRTC client
+  const { 
+    connectionState: p2pState, 
+    peers: p2pPeers, 
+    isConnected: p2pConnected,
+    connect: connectP2P,
+    disconnect: disconnectP2P,
+    error: p2pError 
+  } = useByteCave();
+
   // Network stats
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
   const [replicationStats, setReplicationStats] = useState<ReplicationStats | null>(null);
@@ -93,7 +102,6 @@ export const VaultTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingNode, setEditingNode] = useState<NodeInfo | null>(null);
-  const [currentAccount, setCurrentAccount] = useState<string>('');
   
   // Form state
   const [formData, setFormData] = useState({
@@ -108,34 +116,17 @@ export const VaultTab: React.FC = () => {
   const [storageResult, setStorageResult] = useState<{ cid?: string; error?: string } | null>(null);
   const [storing, setStoring] = useState(false);
 
-  // Force purge state
-  const [purging, setPurging] = useState<string | null>(null);
 
-  // Network discovery state
-  const [seedNodeUrl, setSeedNodeUrl] = useState('');
+  // Network discovery state (used for peer matching)
   const [discoveredNodes, setDiscoveredNodes] = useState<Map<string, { url: string; status: 'checking' | 'online' | 'offline'; publicKey?: string; peerId?: string; ownerAddress?: string }>>(new Map());
-  const [discovering, setDiscovering] = useState(false);
   const discoveredUrlsRef = React.useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    loadCurrentAccount();
     fetchData();
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  async function loadCurrentAccount() {
-    try {
-      if (typeof window.ethereum !== 'undefined') {
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const address = await signer.getAddress();
-        setCurrentAccount(address.toLowerCase());
-      }
-    } catch (error) {
-      console.error('Error loading account:', error);
-    }
-  }
 
   async function fetchData() {
     try {
@@ -213,6 +204,7 @@ export const VaultTab: React.FC = () => {
             peers: data.peers || 0,
             requestsLastHour: data.metrics?.requestsLastHour || 0,
             avgResponseTime: data.metrics?.avgResponseTime || 0,
+            peerId: data.peerId,
             integrity: data.integrity,
             contentTypes,
             allowedGuilds,
@@ -420,46 +412,65 @@ export const VaultTab: React.FC = () => {
     }
   }
 
-  async function handleForcePurge(nodeUrl: string, nodeId: string) {
-    if (!window.confirm(
-      '⚠️ DANGER: This will delete ALL blobs from this node.\n\nAre you sure?'
-    )) return;
-
-    try {
-      setPurging(nodeId);
-      const response = await fetch(`${nodeUrl}/admin/force-purge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Purge failed: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      alert(`Purge complete: ${result.deleted} blobs deleted`);
-      fetchData();
-    } catch (error: any) {
-      alert(`Purge failed: ${error.message}`);
-    } finally {
-      setPurging(null);
-    }
-  }
-
-  function startEdit(node: NodeInfo) {
-    setEditingNode(node);
-    setFormData({
-      ownerAddress: node.owner,
-      publicKey: node.publicKey,
-      url: node.url,
-      metadata: ''
-    });
-  }
-
   function cancelEdit() {
     setEditingNode(null);
     setFormData({ ownerAddress: '', publicKey: '', url: '', metadata: '' });
+  }
+
+  async function handleRegisterPeer(peerId: string) {
+    // Find the peer's HTTP URL from discovered nodes or health endpoint
+    const peer = p2pPeers.find(p => p.peerId === peerId);
+    if (!peer) {
+      alert('Peer not found');
+      return;
+    }
+
+    // Try to get node info from HTTP endpoint
+    const httpUrl = (peer as any).httpUrl;
+    if (!httpUrl) {
+      alert('No HTTP endpoint available for this peer. Cannot register.');
+      return;
+    }
+
+    try {
+      // Fetch node info to get public key and owner address
+      const response = await fetch(`${httpUrl}/node/info`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch node info');
+      }
+
+      const nodeInfo = await response.json();
+      const publicKey = nodeInfo.publicKey;
+      const ownerAddress = nodeInfo.ownerAddress;
+
+      if (!publicKey) {
+        alert('Node did not provide a public key. Cannot register.');
+        return;
+      }
+
+      // Get signer
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      
+      // Use node's owner address or fall back to connected wallet
+      const finalOwner = ownerAddress || signerAddress;
+
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS!, VAULT_REGISTRY_ABI, signer);
+      const metadataHash = ethers.id('bytecave-node');
+
+      const tx = await contract.addNode(finalOwner, publicKey, httpUrl, metadataHash);
+      await tx.wait();
+
+      alert('Node registered successfully!');
+      fetchData();
+    } catch (error: any) {
+      console.error('Error registering peer:', error);
+      alert(`Registration failed: ${error.message}`);
+    }
   }
 
   // Network discovery functions
@@ -532,47 +543,6 @@ export const VaultTab: React.FC = () => {
       }
     } catch (error) {
       // Silently fail - peer discovery is optional
-    }
-  }
-
-  async function handleDiscoverNode(e: React.FormEvent) {
-    e.preventDefault();
-    if (!seedNodeUrl.trim()) return;
-    
-    setDiscovering(true);
-    await discoverFromNode(seedNodeUrl.trim());
-    setSeedNodeUrl('');
-    setDiscovering(false);
-  }
-
-  async function handleRegisterDiscoveredNode(nodeUrl: string, publicKey: string, nodeOwnerAddress?: string) {
-    if (!VAULT_REGISTRY_ADDRESS || !publicKey) {
-      alert('Cannot register: missing registry address or public key');
-      return;
-    }
-
-    // Use node's configured owner address if available, otherwise use connected wallet
-    let ownerAddress = nodeOwnerAddress;
-    if (!ownerAddress) {
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      ownerAddress = await signer.getAddress();
-    }
-
-    try {
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
-      const metadataHash = ethers.id('bytecave-node');
-
-      const tx = await contract.addNode(ownerAddress, publicKey, nodeUrl, metadataHash);
-      await tx.wait();
-
-      alert('Node registered successfully!');
-      fetchData();
-    } catch (error: any) {
-      console.error('Error registering node:', error);
-      alert(`Registration failed: ${error.message}`);
     }
   }
 
@@ -715,67 +685,175 @@ export const VaultTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Network Discovery */}
-      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-        <h3 className="text-lg font-semibold text-white mb-4">Discover Network Nodes</h3>
-        <p className="text-sm text-gray-400 mb-4">
-          Add a seed node URL to discover it and all connected peers automatically
-        </p>
-        <form onSubmit={handleDiscoverNode} className="flex gap-4 mb-4">
-          <input
-            type="text"
-            value={seedNodeUrl}
-            onChange={(e) => setSeedNodeUrl(e.target.value)}
-            placeholder="http://localhost:5001"
-            className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={discovering || !seedNodeUrl.trim()}
-            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
-          >
-            {discovering ? 'Discovering...' : 'Discover'}
-          </button>
-        </form>
+      {/* P2P Network - Enhanced with peer details */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-700">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              {p2pConnected ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-500" />}
+              P2P Network
+            </h3>
+            <div className="flex items-center gap-3">
+              <span className={`text-sm ${
+                p2pState === 'connected' ? 'text-green-400' :
+                p2pState === 'connecting' ? 'text-yellow-400' :
+                p2pState === 'error' ? 'text-red-400' : 'text-gray-500'
+              }`}>
+                {p2pState === 'connected' ? `Connected (${p2pPeers.length} peers)` :
+                 p2pState === 'connecting' ? 'Connecting...' :
+                 p2pState === 'error' ? 'Error' : 'Disconnected'}
+              </span>
+              <button
+                onClick={p2pConnected ? disconnectP2P : connectP2P}
+                className={`px-3 py-1 text-sm rounded transition-colors ${
+                  p2pConnected 
+                    ? 'bg-red-600 hover:bg-red-700 text-white' 
+                    : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                }`}
+              >
+                {p2pConnected ? 'Disconnect' : 'Connect P2P'}
+              </button>
+            </div>
+          </div>
+        </div>
+        {p2pError && (
+          <p className="text-sm text-red-400 px-4 py-2">{p2pError}</p>
+        )}
         
-        {discoveredNodes.size > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-400">Discovered {discoveredNodes.size} node(s):</p>
-            <div className="space-y-2">
-              {Array.from(discoveredNodes.values()).map((node) => {
-                const isRegistered = nodes.some(n => n.url === node.url);
+        {/* P2P Peers Table */}
+        {p2pPeers.length > 0 ? (
+          <table className="w-full">
+            <thead className="bg-gray-900">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Peer ID</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Blobs</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Integrity</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Storage</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Uptime</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Success Rate</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Registry</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-700">
+              {p2pPeers.map(peer => {
+                const registeredNode = nodes.find(n => {
+                  if (n.health?.peerId) return n.health.peerId === peer.peerId;
+                  const peerIdFromUrl = discoveredNodes.get(n.url)?.peerId;
+                  return peerIdFromUrl === peer.peerId;
+                });
+                const isRegistered = !!registeredNode;
+                const health = registeredNode?.health;
+                
                 return (
-                  <div key={node.url} className="flex items-center justify-between bg-gray-900 p-3 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className={`w-2 h-2 rounded-full ${
-                        node.status === 'online' ? 'bg-green-400' : 
-                        node.status === 'checking' ? 'bg-yellow-400 animate-pulse' : 'bg-red-400'
-                      }`} />
-                      <div>
-                        <span className="text-white">{node.url}</span>
-                        {node.peerId && (
-                          <span className="text-xs text-gray-500 ml-2">({node.peerId.slice(0, 12)}...)</span>
-                        )}
+                  <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                        <span className="text-sm text-white font-mono">{peer.peerId.slice(0, 16)}...</span>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
+                    </td>
+                    <td className="px-4 py-3">
+                      {health ? (
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          health.status === 'healthy'
+                            ? 'bg-green-900/50 text-green-400 border border-green-700'
+                            : 'bg-red-900/50 text-red-400 border border-red-700'
+                        }`}>
+                          {health.status}
+                        </span>
+                      ) : (
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          peer.connected 
+                            ? 'bg-green-900/50 text-green-400 border border-green-700'
+                            : 'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
+                        }`}>
+                          {peer.connected ? 'connected' : 'discovered'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? health.storedBlobs : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {health?.integrity ? (
+                        (() => {
+                          const i = health.integrity;
+                          const hasIssues = i.failed > 0 || i.orphaned > 0 || i.metadataTampered > 0;
+                          if (hasIssues) {
+                            return (
+                              <span className="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400 border border-red-700">
+                                ⚠️ Issues
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400 border border-green-700">
+                              ✓ {i.passed}/{i.checked}
+                            </span>
+                          );
+                        })()
+                      ) : (
+                        <span className="text-gray-500">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? formatBytes(health.totalSize) : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? formatUptime(health.uptime) : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? `${(health.successRate * 100).toFixed(1)}%` : '-'}
+                    </td>
+                    <td className="px-4 py-3">
                       {isRegistered ? (
                         <span className="px-2 py-1 text-xs bg-cyan-900/50 text-cyan-400 border border-cyan-700 rounded">
                           Registered
                         </span>
-                      ) : node.status === 'online' && node.publicKey ? (
-                        <button
-                          onClick={() => handleRegisterDiscoveredNode(node.url, node.publicKey!, node.ownerAddress)}
-                          className="px-3 py-1 text-sm bg-cyan-600 text-white rounded hover:bg-cyan-700 transition-colors"
-                        >
-                          Register
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
+                      ) : (
+                        <span className="px-2 py-1 text-xs bg-gray-700/50 text-gray-400 border border-gray-600 rounded">
+                          Unregistered
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        {isRegistered && registeredNode ? (
+                          registeredNode.active ? (
+                            <button
+                              onClick={() => handleRemoveNode(registeredNode.nodeId)}
+                              className="px-2 py-1 text-xs bg-red-900/50 text-red-400 border border-red-700 rounded hover:bg-red-800/50 transition-colors"
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleReactivateNode(registeredNode.nodeId)}
+                              className="px-2 py-1 text-xs bg-green-900/50 text-green-400 border border-green-700 rounded hover:bg-green-800/50 transition-colors"
+                            >
+                              Reactivate
+                            </button>
+                          )
+                        ) : (
+                          <button
+                            onClick={() => handleRegisterPeer(peer.peerId)}
+                            className="px-2 py-1 text-xs bg-cyan-900/50 text-cyan-400 border border-cyan-700 rounded hover:bg-cyan-800/50 transition-colors"
+                          >
+                            Register
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
+            </tbody>
+          </table>
+        ) : (
+          <div className="px-4 py-8 text-center text-gray-400">
+            {p2pConnected ? 'No peers connected yet' : 'Click "Connect P2P" to discover network peers'}
           </div>
         )}
       </div>
@@ -843,196 +921,6 @@ export const VaultTab: React.FC = () => {
         </div>
       )}
 
-      {/* Nodes List */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-700">
-          <h3 className="text-lg font-semibold text-white">Registered Nodes</h3>
-        </div>
-        <table className="w-full">
-          <thead className="bg-gray-900">
-            <tr>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">URL</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Blobs</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Integrity</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Storage</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Uptime</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Success Rate</th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-700">
-            {nodes.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
-                  No nodes registered yet. Click "Add Node" to register one.
-                </td>
-              </tr>
-            ) : (
-              nodes.map((node) => {
-                const contentTypes = node.health?.contentTypes;
-                const hasMessages = contentTypes === 'all' || (Array.isArray(contentTypes) && contentTypes.includes('messages'));
-                const hasPosts = contentTypes === 'all' || (Array.isArray(contentTypes) && contentTypes.includes('posts'));
-                const hasMedia = contentTypes === 'all' || (Array.isArray(contentTypes) && contentTypes.includes('media'));
-                const hasListings = contentTypes === 'all' || (Array.isArray(contentTypes) && contentTypes.includes('listings'));
-                
-                return (
-                  <React.Fragment key={node.nodeId}>
-                    {/* Row 1: Main node info */}
-                    <tr className="hover:bg-gray-700/50 transition-colors border-b-0">
-                      <td className="px-4 py-3">
-                        <a
-                          href={node.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-cyan-400 hover:text-cyan-300 hover:underline"
-                        >
-                          {node.url}
-                        </a>
-                      </td>
-                      <td className="px-4 py-3">
-                        {!node.active ? (
-                          <span className="px-2 py-1 text-xs rounded-full bg-gray-700/50 text-gray-400 border border-gray-600">
-                            inactive
-                          </span>
-                        ) : node.loading ? (
-                          <span className="text-gray-500 text-sm">Loading...</span>
-                        ) : node.health ? (
-                          <span
-                            className={`px-2 py-1 text-xs rounded-full ${
-                              node.health.status === 'healthy'
-                                ? 'bg-green-900/50 text-green-400 border border-green-700'
-                                : 'bg-red-900/50 text-red-400 border border-red-700'
-                            }`}
-                          >
-                            {node.health.status}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500 text-sm">Offline</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-300">
-                        {node.loading ? '...' : node.health ? node.health.storedBlobs : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {node.loading ? (
-                          <span className="text-gray-300">...</span>
-                        ) : node.health?.integrity ? (
-                          (() => {
-                            const i = node.health.integrity;
-                            const hasIssues = i.failed > 0 || i.orphaned > 0 || i.metadataTampered > 0;
-                            if (hasIssues) {
-                              const issues = [];
-                              if (i.failed > 0) issues.push(`${i.failed} BAD`);
-                              if (i.orphaned > 0) issues.push(`${i.orphaned} ORPHAN`);
-                              if (i.metadataTampered > 0) issues.push(`${i.metadataTampered} META`);
-                              return (
-                                <span 
-                                  className="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400 border border-red-700"
-                                  title={`Blob: ${i.failed} tampered, Orphaned: ${i.orphaned}, Metadata: ${i.metadataTampered} tampered`}
-                                >
-                                  ⚠️ {issues.join(' ')}
-                                </span>
-                              );
-                            }
-                            return (
-                              <span className="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400 border border-green-700">
-                                ✓ {i.passed}/{i.checked}
-                              </span>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-gray-500">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-300">
-                        {node.loading ? '...' : node.health ? formatBytes(node.health.totalSize) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-300">
-                        {node.loading ? '...' : node.health ? formatUptime(node.health.uptime) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-300">
-                        {node.loading ? '...' : node.health ? `${(node.health.successRate * 100).toFixed(1)}%` : '-'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2 flex-wrap">
-                          <button
-                            onClick={() => startEdit(node)}
-                            className="px-3 py-1 text-sm bg-cyan-900/50 text-cyan-400 border border-cyan-700 rounded hover:bg-cyan-800/50 transition-colors"
-                          >
-                            Edit
-                          </button>
-                          {node.active ? (
-                            <button
-                              onClick={() => handleRemoveNode(node.nodeId)}
-                              className="px-3 py-1 text-sm bg-red-900/50 text-red-400 border border-red-700 rounded hover:bg-red-800/50 transition-colors"
-                            >
-                              Deactivate
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleReactivateNode(node.nodeId)}
-                              className="px-3 py-1 text-sm bg-green-900/50 text-green-400 border border-green-700 rounded hover:bg-green-800/50 transition-colors"
-                            >
-                              Reactivate
-                            </button>
-                          )}
-                          {currentAccount && node.owner.toLowerCase() === currentAccount && (
-                            <button
-                              onClick={() => handleForcePurge(node.url, node.nodeId)}
-                              disabled={purging === node.nodeId}
-                              className="px-3 py-1 text-sm bg-orange-900/50 text-orange-400 border border-orange-700 rounded hover:bg-orange-800/50 transition-colors disabled:opacity-50"
-                              title="Force purge all data"
-                            >
-                              {purging === node.nodeId ? 'Purging...' : 'Purge'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {/* Row 2: Content types */}
-                    <tr className="bg-gray-900/30 border-b border-gray-700">
-                      <td colSpan={8} className="px-4 py-2">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-500 uppercase tracking-wider">Stores:</span>
-                          {node.loading ? (
-                            <span className="text-xs text-gray-500">Loading...</span>
-                          ) : !node.active ? (
-                            <span className="text-xs text-gray-500 italic">Node inactive</span>
-                          ) : contentTypes === 'all' ? (
-                            <span className="text-xs text-cyan-400 font-mono">ALL CONTENT</span>
-                          ) : contentTypes ? (
-                            <div className="flex items-center gap-2">
-                              <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${hasMessages ? 'bg-blue-900/50 text-blue-400' : 'bg-gray-800/50 text-gray-600'}`} title="Messages">
-                                <MessageSquare size={12} />
-                                <span className="text-xs font-mono">MSG</span>
-                              </div>
-                              <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${hasPosts ? 'bg-green-900/50 text-green-400' : 'bg-gray-800/50 text-gray-600'}`} title="Posts">
-                                <FileText size={12} />
-                                <span className="text-xs font-mono">POST</span>
-                              </div>
-                              <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${hasMedia ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800/50 text-gray-600'}`} title="Media">
-                                <Image size={12} />
-                                <span className="text-xs font-mono">MEDIA</span>
-                              </div>
-                              <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${hasListings ? 'bg-yellow-900/50 text-yellow-400' : 'bg-gray-800/50 text-gray-600'}`} title="Listings">
-                                <ShoppingBag size={12} />
-                                <span className="text-xs font-mono">LIST</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-gray-500 italic">Unknown</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  </React.Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 };
