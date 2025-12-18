@@ -14,6 +14,19 @@ const RPC_URL = process.env.REACT_APP_RPC_URL || 'http://localhost:8545';
 // Singleton client instance to prevent multiple instances across hot reloads
 let globalClient: ByteCaveClient | null = null;
 
+interface NodeInfo {
+  publicKey: string;
+  ownerAddress?: string;
+  peerId: string;
+}
+
+interface NodeHealth {
+  status: string;
+  blobCount: number;
+  storageUsed: number;
+  uptime: number;
+}
+
 interface UseByteCaveReturn {
   client: ByteCaveClient | null;
   connectionState: ConnectionState;
@@ -23,6 +36,8 @@ interface UseByteCaveReturn {
   disconnect: () => Promise<void>;
   store: (data: Uint8Array, contentType?: string) => Promise<StoreResult>;
   retrieve: (cid: string) => Promise<RetrieveResult>;
+  getNodeInfo: (peerId: string) => Promise<NodeInfo | null>;
+  getNodeHealth: (peerId: string) => Promise<NodeHealth | null>;
   error: string | null;
 }
 
@@ -43,14 +58,23 @@ export function useByteCave(): UseByteCaveReturn {
     // Only create client if it doesn't exist
     if (!globalClient) {
       console.log('[useByteCave] Creating NEW ByteCaveClient singleton');
+      
+      // Get relay peers from environment
+      const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
+      const relayPeers = relayPeersEnv 
+        ? relayPeersEnv.split(',').map(p => p.trim()).filter(p => p)
+        : [];
+      
+      if (relayPeers.length === 0) {
+        console.warn('[useByteCave] No relay peers configured! Set REACT_APP_RELAY_PEERS in .env');
+      }
+      
+      console.log('[useByteCave] Using relay peers:', relayPeers);
+      
       globalClient = new ByteCaveClient({
         contractAddress: VAULT_REGISTRY_ADDRESS,
         rpcUrl: RPC_URL,
-        seedNodes: [
-          'http://localhost:5001',
-          'http://localhost:5002', 
-          'http://localhost:5003'
-        ],
+        relayPeers,
         maxPeers: 10,
         connectionTimeout: 30000
       });
@@ -139,6 +163,22 @@ export function useByteCave(): UseByteCaveReturn {
     return globalClient.retrieve(cid);
   }, []);
 
+  const getNodeInfo = useCallback(async (peerId: string): Promise<NodeInfo | null> => {
+    if (!globalClient) {
+      return null;
+    }
+    // Cast to any since TypeScript doesn't have the updated type declarations
+    return (globalClient as any).getNodeInfo(peerId);
+  }, []);
+
+  const getNodeHealth = useCallback(async (peerId: string): Promise<NodeHealth | null> => {
+    if (!globalClient) {
+      return null;
+    }
+    // Cast to any since TypeScript doesn't have the updated type declarations
+    return (globalClient as any).getNodeHealth(peerId);
+  }, []);
+
   return {
     client: globalClient,
     connectionState,
@@ -148,6 +188,8 @@ export function useByteCave(): UseByteCaveReturn {
     disconnect,
     store,
     retrieve,
+    getNodeInfo,
+    getNodeHealth,
     error
   };
 }

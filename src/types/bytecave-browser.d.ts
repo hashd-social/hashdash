@@ -2,8 +2,7 @@ declare module '@hashd/bytecave-browser' {
   export interface ByteCaveConfig {
     contractAddress: string;
     rpcUrl: string;
-    bootstrapWebSocket?: string;
-    seedNodes?: string[];
+    relayPeers?: string[]; // Relay node multiaddrs for pure P2P discovery
     maxPeers?: number;
     connectionTimeout?: number;
   }

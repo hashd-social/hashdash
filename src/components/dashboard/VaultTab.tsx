@@ -90,6 +90,9 @@ export const VaultTab: React.FC = () => {
     isConnected: p2pConnected,
     connect: connectP2P,
     disconnect: disconnectP2P,
+    store: p2pStore,
+    getNodeInfo,
+    getNodeHealth,
     error: p2pError 
   } = useByteCave();
 
@@ -115,11 +118,6 @@ export const VaultTab: React.FC = () => {
   const [testText, setTestText] = useState('');
   const [storageResult, setStorageResult] = useState<{ cid?: string; error?: string } | null>(null);
   const [storing, setStoring] = useState(false);
-
-
-  // Network discovery state (used for peer matching)
-  const [discoveredNodes, setDiscoveredNodes] = useState<Map<string, { url: string; status: 'checking' | 'online' | 'offline'; publicKey?: string; peerId?: string; ownerAddress?: string }>>(new Map());
-  const discoveredUrlsRef = React.useRef<Set<string>>(new Set());
 
   useEffect(() => {
     fetchData();
@@ -166,53 +164,42 @@ export const VaultTab: React.FC = () => {
 
       setNodes(nodeDetails);
 
-      // Fetch health stats for each active node only
+      // Fetch health stats for each active node via P2P ONLY
+      // No HTTP fallback - nodes must be reachable via P2P
       const healthPromises = nodeDetails.map(async (node) => {
         // Skip health check for inactive nodes
         if (!node.active) return null;
         
-        try {
-          const response = await fetch(`${node.url}/health`, { 
-            signal: AbortSignal.timeout(5000) 
-          });
-          const data = await response.json();
-          
-          // Also fetch node info for content types
-          let contentTypes: string[] | 'all' | undefined;
-          let allowedGuilds: string[] | 'all' | undefined;
-          let blockedGuilds: string[] | undefined;
-          try {
-            const infoResponse = await fetch(`${node.url}/node/info`, {
-              signal: AbortSignal.timeout(3000)
-            });
-            if (infoResponse.ok) {
-              const info = await infoResponse.json();
-              contentTypes = info.contentTypes;
-              allowedGuilds = info.allowedGuilds;
-              blockedGuilds = info.blockedGuilds;
+        // Try to get health via P2P for all connected peers
+        if (p2pConnected && p2pPeers.length > 0) {
+          // Try each connected peer to find one that matches this node
+          for (const peer of p2pPeers) {
+            try {
+              console.log(`[VaultTab] Trying P2P health for peer ${peer.peerId.slice(0, 12)}...`);
+              const p2pHealth = await getNodeHealth(peer.peerId);
+              if (p2pHealth) {
+                console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}`);
+                return {
+                  status: p2pHealth.status,
+                  storedBlobs: p2pHealth.blobCount || 0,
+                  totalSize: p2pHealth.storageUsed || 0,
+                  uptime: p2pHealth.uptime || 0,
+                  successRate: 1,
+                  peers: 0,
+                  requestsLastHour: 0,
+                  avgResponseTime: 0,
+                  peerId: peer.peerId
+                };
+              }
+            } catch (err) {
+              console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}`);
             }
-          } catch {
-            // Node info not available
           }
-          
-          return {
-            status: data.status,
-            storedBlobs: data.storedBlobs || 0,
-            totalSize: data.totalSize || 0,
-            uptime: data.uptime || 0,
-            successRate: data.metrics?.successRate || 0,
-            peers: data.peers || 0,
-            requestsLastHour: data.metrics?.requestsLastHour || 0,
-            avgResponseTime: data.metrics?.avgResponseTime || 0,
-            peerId: data.peerId,
-            integrity: data.integrity,
-            contentTypes,
-            allowedGuilds,
-            blockedGuilds
-          };
-        } catch {
-          return null;
         }
+
+        // No P2P available - return null (node unreachable)
+        console.log(`[VaultTab] No P2P connection available for node ${node.nodeId.slice(0, 12)}`);
+        return null;
       });
 
       const healthStats = await Promise.all(healthPromises);
@@ -242,19 +229,8 @@ export const VaultTab: React.FC = () => {
         healthyNodes
       });
 
-      // Fetch replication stats from first healthy node
-      const healthyNode = nodeDetails.find((_, i) => healthStats[i]?.status === 'healthy');
-      if (healthyNode) {
-        try {
-          const response = await fetch(`${healthyNode.url}/replication-stats`);
-          if (response.ok) {
-            const data = await response.json();
-            setReplicationStats(data);
-          }
-        } catch (error) {
-          console.error('Failed to fetch replication stats:', error);
-        }
-      }
+      // Replication stats would need a P2P protocol - skip for now
+      // TODO: Add /bytecave/replication-stats protocol
 
     } catch (error) {
       console.error('Failed to fetch data:', error);
@@ -385,23 +361,17 @@ export const VaultTab: React.FC = () => {
       setStorageResult(null);
 
       const encryptedHex = await CryptoUtils.encryptText(testText);
+      const ciphertext = new Uint8Array(Buffer.from(encryptedHex, 'hex'));
 
-      const response = await fetch(`${activeNode.url}/store`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ciphertext: encryptedHex,
-          mimeType: 'text/plain'
-        })
-      });
+      // Use P2P store
+      const result = await p2pStore(ciphertext, 'text/plain');
 
-      if (!response.ok) {
-        throw new Error(`Storage failed: ${await response.text()}`);
+      if (!result.success) {
+        throw new Error(result.error || 'Storage failed');
       }
 
-      const result = await response.json();
       setStorageResult({ cid: result.cid });
-      alert(`✅ Successfully stored!\nCID: ${result.cid}`);
+      alert(`✅ Successfully stored via P2P!\nCID: ${result.cid}`);
       setTimeout(() => fetchData(), 500);
     } catch (error: any) {
       console.error('Storage error:', error);
@@ -418,38 +388,36 @@ export const VaultTab: React.FC = () => {
   }
 
   async function handleRegisterPeer(peerId: string) {
-    // Find the peer's HTTP URL from discovered nodes or health endpoint
     const peer = p2pPeers.find(p => p.peerId === peerId);
     if (!peer) {
       alert('Peer not found');
       return;
     }
 
-    // Try to get node info from HTTP endpoint
-    const httpUrl = (peer as any).httpUrl;
-    if (!httpUrl) {
-      alert('No HTTP endpoint available for this peer. Cannot register.');
-      return;
-    }
-
     try {
-      // Fetch node info to get public key and owner address
-      const response = await fetch(`${httpUrl}/node/info`, {
-        signal: AbortSignal.timeout(5000)
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch node info');
-      }
+      let publicKey: string | undefined;
+      let ownerAddress: string | undefined;
+      let nodeUrl: string | undefined;
 
-      const nodeInfo = await response.json();
-      const publicKey = nodeInfo.publicKey;
-      const ownerAddress = nodeInfo.ownerAddress;
-
-      if (!publicKey) {
-        alert('Node did not provide a public key. Cannot register.');
+      // Get node info via P2P only
+      if (!p2pConnected || !peer.connected) {
+        alert('Not connected to peer via P2P. Connect first before registering.');
         return;
       }
+
+      console.log('[VaultTab] Getting node info via P2P for peer:', peerId);
+      const info = await getNodeInfo(peerId);
+      
+      if (!info || !info.publicKey) {
+        alert('Failed to get node info via P2P. Ensure the node supports the /bytecave/info protocol.');
+        return;
+      }
+
+      console.log('[VaultTab] Got P2P node info:', info);
+      publicKey = info.publicKey;
+      ownerAddress = info.ownerAddress;
+      // For P2P nodes, use the peerId as the URL identifier
+      nodeUrl = `p2p://${peerId}`;
 
       // Get signer
       const provider = new ethers.BrowserProvider((window as any).ethereum);
@@ -462,7 +430,7 @@ export const VaultTab: React.FC = () => {
       const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS!, VAULT_REGISTRY_ABI, signer);
       const metadataHash = ethers.id('bytecave-node');
 
-      const tx = await contract.addNode(finalOwner, publicKey, httpUrl, metadataHash);
+      const tx = await contract.addNode(finalOwner, publicKey, nodeUrl!, metadataHash);
       await tx.wait();
 
       alert('Node registered successfully!');
@@ -473,78 +441,9 @@ export const VaultTab: React.FC = () => {
     }
   }
 
-  // Network discovery functions
-  async function discoverFromNode(nodeUrl: string) {
-    const normalizedUrl = nodeUrl.replace(/\/$/, '');
-    
-    // Use ref for synchronous check to prevent loops
-    if (discoveredUrlsRef.current.has(normalizedUrl)) {
-      return;
-    }
-    discoveredUrlsRef.current.add(normalizedUrl);
-
-    setDiscoveredNodes(prev => new Map(prev).set(normalizedUrl, { 
-      url: normalizedUrl, 
-      status: 'checking' 
-    }));
-
-    try {
-      const response = await fetch(`${normalizedUrl}/health`, {
-        signal: AbortSignal.timeout(5000),
-        mode: 'cors'
-      });
-      
-      if (!response.ok) {
-        throw new Error('Health check failed');
-      }
-      
-      const health = await response.json();
-      const publicKey = health.publicKey ? `0x${health.publicKey}` : undefined;
-      
-      setDiscoveredNodes(prev => {
-        const updated = new Map(prev);
-        updated.set(normalizedUrl, {
-          url: normalizedUrl,
-          status: 'online',
-          publicKey,
-          peerId: health.peerId,
-          ownerAddress: health.ownerAddress
-        });
-        return updated;
-      });
-
-      // Auto-discover peers from this node
-      await discoverPeersFromNode(normalizedUrl);
-
-    } catch (error) {
-      setDiscoveredNodes(prev => {
-        const updated = new Map(prev);
-        updated.set(normalizedUrl, { url: normalizedUrl, status: 'offline' });
-        return updated;
-      });
-    }
-  }
-
-  async function discoverPeersFromNode(nodeUrl: string) {
-    try {
-      const response = await fetch(`${nodeUrl}/peers`, {
-        signal: AbortSignal.timeout(5000),
-        mode: 'cors'
-      });
-      
-      if (!response.ok) return;
-      
-      const data = await response.json();
-      
-      for (const peer of data.peers || []) {
-        if (peer.httpEndpoint && peer.httpEndpoint !== nodeUrl) {
-          discoverFromNode(peer.httpEndpoint);
-        }
-      }
-    } catch (error) {
-      // Silently fail - peer discovery is optional
-    }
-  }
+  // Network discovery via P2P only - no HTTP
+  // Peers are discovered via libp2p pubsub and DHT, not HTTP crawling
+  // The p2pPeers state is updated automatically by the useByteCave hook
 
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 B';
@@ -605,7 +504,7 @@ export const VaultTab: React.FC = () => {
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Active Nodes</p>
+              <p className="text-gray-400 text-sm">Registered Nodes</p>
               <p className="text-2xl font-bold text-white mt-1">{networkStats?.activeNodes || 0}</p>
               <p className="text-xs text-gray-500 mt-1">{networkStats?.healthyNodes || 0} healthy</p>
             </div>
@@ -740,8 +639,7 @@ export const VaultTab: React.FC = () => {
               {p2pPeers.map(peer => {
                 const registeredNode = nodes.find(n => {
                   if (n.health?.peerId) return n.health.peerId === peer.peerId;
-                  const peerIdFromUrl = discoveredNodes.get(n.url)?.peerId;
-                  return peerIdFromUrl === peer.peerId;
+                  return false;
                 });
                 const isRegistered = !!registeredNode;
                 const health = registeredNode?.health;
