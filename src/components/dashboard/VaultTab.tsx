@@ -34,6 +34,7 @@ interface NodeHealth {
   requestsLastHour: number;
   avgResponseTime: number;
   peerId?: string;
+  nodeId?: string;
   integrity?: {
     checked: number;
     passed: number;
@@ -50,6 +51,7 @@ interface NodeHealth {
 interface NodeWithHealth extends NodeInfo {
   health?: NodeHealth;
   loading?: boolean;
+  isRegistered?: boolean;
 }
 
 interface NetworkStats {
@@ -123,7 +125,7 @@ export const VaultTab: React.FC = () => {
     fetchData();
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [p2pPeers]);
 
 
   async function fetchData() {
@@ -142,8 +144,11 @@ export const VaultTab: React.FC = () => {
       const totalNodes = Number(total);
       const activeNodes = Number(active);
 
-      // Get all nodes (including deactivated) for display
-      const nodeIds = await contract.getAllNodes(0, 100);
+      // Get all nodes (including deactivated) for display - only if there are nodes
+      let nodeIds: string[] = [];
+      if (totalNodes > 0) {
+        nodeIds = await contract.getAllNodes(0, 100);
+      }
       
       // Fetch details for each node
       const nodeDetails: NodeWithHealth[] = await Promise.all(
@@ -204,12 +209,99 @@ export const VaultTab: React.FC = () => {
 
       const healthStats = await Promise.all(healthPromises);
 
-      // Update nodes with health
-      setNodes(nodeDetails.map((node, i) => ({
+      // Update registered nodes with health
+      const registeredNodesWithHealth = nodeDetails.map((node, i) => ({
         ...node,
         loading: false,
-        health: healthStats[i] || undefined
-      })));
+        health: healthStats[i] || undefined,
+        isRegistered: true
+      }));
+
+      // Add P2P discovered peers that aren't registered
+      const registeredPeerIds = new Set(registeredNodesWithHealth.map(n => n.nodeId));
+      const unregisteredP2PPeers: NodeWithHealth[] = await Promise.all(
+        p2pPeers
+          .filter(peer => !registeredPeerIds.has(peer.peerId))
+          .map(async (peer) => {
+            // Use the HTTP URL from peer announcement if available
+            const httpUrl = (peer as any).httpUrl;
+            let health = undefined;
+            let isRelay = false;
+            
+            if (httpUrl) {
+              try {
+                console.log(`[VaultTab] Fetching health from ${httpUrl}/health for peer ${peer.peerId.slice(0, 12)}`);
+                const response = await fetch(`${httpUrl}/health`);
+                if (response.ok) {
+                  const data = await response.json();
+                  console.log(`[VaultTab] Got health data from ${httpUrl}:`, data);
+                  health = {
+                    status: data.status || 'unknown',
+                    storedBlobs: data.storedBlobs || 0,
+                    totalSize: data.totalSize || 0,
+                    uptime: data.uptime || 0,
+                    successRate: data.metrics?.successRate || 1,
+                    peers: data.p2p?.connected || 0,
+                    requestsLastHour: data.metrics?.requestsLastHour || 0,
+                    avgResponseTime: data.metrics?.avgResponseTime || 0,
+                    peerId: peer.peerId,
+                    integrity: data.integrity,
+                    nodeId: data.nodeId // Add nodeId from health response
+                  };
+                }
+              } catch (err) {
+                console.warn(`Failed to fetch health from ${httpUrl} for peer ${peer.peerId.slice(0, 12)}:`, err);
+              }
+              
+              // Try to fetch relay info to check if this is a relay node
+              try {
+                const infoResponse = await fetch(`${httpUrl}/info`);
+                if (infoResponse.ok) {
+                  const infoData = await infoResponse.json();
+                  if (infoData.isRelay) {
+                    isRelay = true;
+                    if (!health) {
+                      health = {
+                        status: 'healthy',
+                        storedBlobs: 0,
+                        totalSize: 0,
+                        uptime: infoData.uptime || 0,
+                        successRate: 1,
+                        peers: infoData.connections || 0,
+                        requestsLastHour: 0,
+                        avgResponseTime: 0,
+                        peerId: peer.peerId,
+                        nodeId: infoData.nodeId || 'relay'
+                      };
+                    } else {
+                      health.nodeId = infoData.nodeId || 'relay';
+                    }
+                  }
+                }
+              } catch (err) {
+                // Info endpoint not available, not a relay
+              }
+            } else {
+              console.warn(`[VaultTab] No HTTP URL available for peer ${peer.peerId.slice(0, 12)}`);
+            }
+
+            return {
+              nodeId: peer.peerId,
+              owner: '',
+              publicKey: '',
+              url: httpUrl || `p2p://${peer.peerId}`,
+              metadataHash: '',
+              registeredAt: 0,
+              active: peer.connected,
+              loading: false,
+              health,
+              isRegistered: false
+            };
+          })
+      );
+
+      // Combine registered and unregistered peers
+      setNodes([...registeredNodesWithHealth, ...unregisteredP2PPeers]);
 
       // Aggregate network stats
       const validHealth = healthStats.filter((h): h is NonNullable<typeof h> => h !== null);
@@ -399,25 +491,60 @@ export const VaultTab: React.FC = () => {
       let ownerAddress: string | undefined;
       let nodeUrl: string | undefined;
 
-      // Get node info via P2P only
-      if (!p2pConnected || !peer.connected) {
-        alert('Not connected to peer via P2P. Connect first before registering.');
-        return;
+      // Get node data from health endpoint
+      const nodeData = nodes.find(n => {
+        if (n.health?.peerId) return n.health.peerId === peerId;
+        if (n.nodeId === peerId) return true;
+        return false;
+      });
+
+      // Try to get public key from health data first
+      if (nodeData?.url) {
+        try {
+          const response = await fetch(`${nodeData.url}/health`);
+          if (response.ok) {
+            const healthData = await response.json();
+            publicKey = healthData.publicKey;
+            ownerAddress = healthData.ownerAddress;
+            nodeUrl = nodeData.url;
+            console.log('[VaultTab] Got public key from health endpoint:', publicKey);
+          }
+        } catch (err) {
+          console.warn('[VaultTab] Failed to fetch health data for registration:', err);
+        }
       }
 
-      console.log('[VaultTab] Getting node info via P2P for peer:', peerId);
-      const info = await getNodeInfo(peerId);
+      // Try P2P if health data not available
+      if (!publicKey && p2pConnected && peer.connected) {
+        console.log('[VaultTab] Trying P2P for node info:', peerId);
+        const info = await getNodeInfo(peerId);
+        
+        if (info && info.publicKey) {
+          console.log('[VaultTab] Got P2P node info:', info);
+          publicKey = info.publicKey;
+          ownerAddress = info.ownerAddress;
+          nodeUrl = `p2p://${peerId}`;
+        }
+      }
       
-      if (!info || !info.publicKey) {
-        alert('Failed to get node info via P2P. Ensure the node supports the /bytecave/info protocol.');
-        return;
+      // Only prompt if we couldn't get public key from health or P2P
+      if (!publicKey) {
+        const inputKey = prompt('Enter node public key (hex format):');
+        if (!inputKey) {
+          alert('Public key is required for registration');
+          return;
+        }
+        publicKey = inputKey;
       }
-
-      console.log('[VaultTab] Got P2P node info:', info);
-      publicKey = info.publicKey;
-      ownerAddress = info.ownerAddress;
-      // For P2P nodes, use the peerId as the URL identifier
-      nodeUrl = `p2p://${peerId}`;
+      
+      if (!nodeUrl) {
+        const inputUrl = prompt('Enter node URL (e.g., http://localhost:5001 or p2p://peerId):', `p2p://${peerId}`);
+        if (!inputUrl) {
+          alert('Node URL is required for registration');
+          return;
+        }
+        nodeUrl = inputUrl;
+      }
 
       // Get signer
       const provider = new ethers.BrowserProvider((window as any).ethereum);
@@ -637,19 +764,27 @@ export const VaultTab: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-700">
               {p2pPeers.map(peer => {
-                const registeredNode = nodes.find(n => {
+                const nodeData = nodes.find(n => {
                   if (n.health?.peerId) return n.health.peerId === peer.peerId;
+                  if (n.nodeId === peer.peerId) return true;
                   return false;
                 });
-                const isRegistered = !!registeredNode;
-                const health = registeredNode?.health;
+                const isRegistered = nodeData?.isRegistered || false;
+                const health = nodeData?.health;
                 
                 return (
                   <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                        <span className="text-sm text-white font-mono">{peer.peerId.slice(0, 16)}...</span>
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                        <div className="flex flex-col">
+                          <span className="text-sm text-white font-medium">
+                            {health?.nodeId || 'Unknown Node'}
+                          </span>
+                          <span className="text-xs text-gray-400 font-mono">
+                            {peer.peerId.slice(0, 4)}....{peer.peerId.slice(-4)}
+                          </span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -718,17 +853,17 @@ export const VaultTab: React.FC = () => {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
-                        {isRegistered && registeredNode ? (
-                          registeredNode.active ? (
+                        {isRegistered && nodeData ? (
+                          nodeData.active ? (
                             <button
-                              onClick={() => handleRemoveNode(registeredNode.nodeId)}
+                              onClick={() => handleRemoveNode(nodeData.nodeId)}
                               className="px-2 py-1 text-xs bg-red-900/50 text-red-400 border border-red-700 rounded hover:bg-red-800/50 transition-colors"
                             >
-                              Deactivate
+                              Deregister
                             </button>
                           ) : (
                             <button
-                              onClick={() => handleReactivateNode(registeredNode.nodeId)}
+                              onClick={() => handleReactivateNode(nodeData.nodeId)}
                               className="px-2 py-1 text-xs bg-green-900/50 text-green-400 border border-green-700 rounded hover:bg-green-800/50 transition-colors"
                             >
                               Reactivate

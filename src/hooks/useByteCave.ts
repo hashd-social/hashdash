@@ -12,6 +12,7 @@ const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY || '';
 const RPC_URL = process.env.REACT_APP_RPC_URL || 'http://localhost:8545';
 
 // Singleton client instance to prevent multiple instances across hot reloads
+// IMPORTANT: This is initialized in the useEffect with relay peers, not here
 let globalClient: ByteCaveClient | null = null;
 
 interface NodeInfo {
@@ -55,32 +56,35 @@ export function useByteCave(): UseByteCaveReturn {
       return;
     }
 
-    // Only create client if it doesn't exist
-    if (!globalClient) {
-      console.log('[useByteCave] Creating NEW ByteCaveClient singleton');
-      
-      // Get relay peers from environment
-      const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
-      const relayPeers = relayPeersEnv 
-        ? relayPeersEnv.split(',').map(p => p.trim()).filter(p => p)
-        : [];
-      
-      if (relayPeers.length === 0) {
-        console.warn('[useByteCave] No relay peers configured! Set REACT_APP_RELAY_PEERS in .env');
-      }
-      
-      console.log('[useByteCave] Using relay peers:', relayPeers);
-      
-      globalClient = new ByteCaveClient({
-        contractAddress: VAULT_REGISTRY_ADDRESS,
-        rpcUrl: RPC_URL,
-        relayPeers,
-        maxPeers: 10,
-        connectionTimeout: 30000
-      });
-    } else {
-      console.log('[useByteCave] Reusing existing ByteCaveClient singleton');
+    // Get relay peers from environment
+    const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
+    console.log('[useByteCave] REACT_APP_RELAY_PEERS env var:', relayPeersEnv);
+    const relayPeers = relayPeersEnv 
+      ? relayPeersEnv.split(',').map(p => p.trim()).filter(p => p)
+      : [];
+    
+    console.log('[useByteCave] Parsed relay peers:', relayPeers);
+
+    // Always recreate client to ensure relay peers are used
+    if (globalClient) {
+      console.log('[useByteCave] Stopping old ByteCaveClient to recreate with relay peers');
+      globalClient.stop().catch(err => console.error('Error stopping old client:', err));
+      globalClient = null;
     }
+    
+    console.log('[useByteCave] Creating NEW ByteCaveClient with relay peers:', relayPeers);
+    
+    if (relayPeers.length === 0) {
+      console.warn('[useByteCave] No relay peers configured! Set REACT_APP_RELAY_PEERS in .env');
+    }
+    
+    globalClient = new ByteCaveClient({
+      contractAddress: VAULT_REGISTRY_ADDRESS,
+      rpcUrl: RPC_URL,
+      relayPeers,
+      maxPeers: 10,
+      connectionTimeout: 30000
+    });
 
     const client = globalClient;
 

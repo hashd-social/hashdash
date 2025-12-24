@@ -1397,6 +1397,7 @@
 "@hashd/bytecave-browser@../bytecave-browser":
   version "1.0.0"
   dependencies:
+    "@libp2p/floodsub" "^11.0.10"
     ethers "^6.0.0"
     uint8arrays "^5.0.0"
 
@@ -1745,6 +1746,25 @@
     "@noble/curves" "^2.0.1"
     "@noble/hashes" "^2.0.1"
     multiformats "^13.4.0"
+    protons-runtime "^5.6.0"
+    uint8arraylist "^2.4.8"
+    uint8arrays "^5.1.0"
+
+"@libp2p/floodsub@^11.0.10":
+  version "11.0.10"
+  resolved "https://registry.yarnpkg.com/@libp2p/floodsub/-/floodsub-11.0.10.tgz#025f0a8fc1e611146fae16d5828abd6fa4028ab0"
+  integrity sha512-sRwBG/EL1tgq0E4uasjRzqis0/Vm3BIWi7lAwG5mO2MEaMpRY1Pj0VHVAu4eGmpXZORz+WBcUIpXCrz5IbbmPQ==
+  dependencies:
+    "@libp2p/crypto" "^5.1.13"
+    "@libp2p/interface" "^3.1.0"
+    "@libp2p/interface-internal" "^3.0.9"
+    "@libp2p/peer-collections" "^7.0.9"
+    "@libp2p/peer-id" "^6.0.4"
+    "@libp2p/utils" "^7.0.9"
+    it-length-prefixed "^10.0.1"
+    main-event "^1.0.1"
+    multiformats "^13.4.1"
+    p-queue "^9.0.0"
     protons-runtime "^5.6.0"
     uint8arraylist "^2.4.8"
     uint8arrays "^5.1.0"
@@ -8967,7 +8987,7 @@ multicast-dns@^7.2.5:
     dns-packet "^5.2.2"
     thunky "^1.0.2"
 
-multiformats@^13.0.0, multiformats@^13.0.1, multiformats@^13.3.6, multiformats@^13.4.0:
+multiformats@^13.0.0, multiformats@^13.0.1, multiformats@^13.3.6, multiformats@^13.4.0, multiformats@^13.4.1:
   version "13.4.2"
   resolved "https://registry.yarnpkg.com/multiformats/-/multiformats-13.4.2.tgz#309ee17d3946db9a6954cf6832aeb2b4b10dd0f3"
   integrity sha512-eh6eHCrRi1+POZ3dA+Dq1C6jhP1GNtr9CRINMb67OKzqW9I5DUuZM/3jLPlzhgpGeiNUlEGEbkCYChXMCc/8DQ==
