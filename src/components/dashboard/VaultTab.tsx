@@ -35,6 +35,7 @@ interface NodeHealth {
   avgResponseTime: number;
   peerId?: string;
   nodeId?: string;
+  isRelay?: boolean;
   integrity?: {
     checked: number;
     passed: number;
@@ -223,18 +224,30 @@ export const VaultTab: React.FC = () => {
         p2pPeers
           .filter(peer => !registeredPeerIds.has(peer.peerId))
           .map(async (peer) => {
-            // Use the HTTP URL from peer announcement if available
-            const httpUrl = (peer as any).httpUrl;
             let health = undefined;
-            let isRelay = false;
+            let httpUrl = (peer as any).httpUrl;
             
-            if (httpUrl) {
+            // Try to fetch health data from the peer
+            // First try the provided httpUrl, then try common endpoints
+            const urlsToTry = [];
+            if (httpUrl) urlsToTry.push(httpUrl);
+            
+            // Check if this is the relay peer by comparing peer ID with configured relay
+            const relayPeers = process.env.REACT_APP_RELAY_PEERS?.split(',') || [];
+            const isRelayPeer = relayPeers.some(addr => addr.includes(peer.peerId));
+            
+            if (isRelayPeer) {
+              urlsToTry.push('http://localhost:9090');
+            }
+            
+            for (const url of urlsToTry) {
               try {
-                console.log(`[VaultTab] Fetching health from ${httpUrl}/health for peer ${peer.peerId.slice(0, 12)}`);
-                const response = await fetch(`${httpUrl}/health`);
+                console.log(`[VaultTab] Trying to fetch health from ${url}/health for peer ${peer.peerId.slice(0, 12)}`);
+                const response = await fetch(`${url}/health`);
                 if (response.ok) {
                   const data = await response.json();
-                  console.log(`[VaultTab] Got health data from ${httpUrl}:`, data);
+                  console.log(`[VaultTab] Got health data from ${url}:`, data);
+                  httpUrl = url;
                   health = {
                     status: data.status || 'unknown',
                     storedBlobs: data.storedBlobs || 0,
@@ -246,43 +259,18 @@ export const VaultTab: React.FC = () => {
                     avgResponseTime: data.metrics?.avgResponseTime || 0,
                     peerId: peer.peerId,
                     integrity: data.integrity,
-                    nodeId: data.nodeId // Add nodeId from health response
+                    nodeId: data.nodeId,
+                    isRelay: data.isRelay || false
                   };
+                  break; // Success, stop trying other URLs
                 }
               } catch (err) {
-                console.warn(`Failed to fetch health from ${httpUrl} for peer ${peer.peerId.slice(0, 12)}:`, err);
+                console.warn(`Failed to fetch health from ${url} for peer ${peer.peerId.slice(0, 12)}:`, err);
               }
-              
-              // Try to fetch relay info to check if this is a relay node
-              try {
-                const infoResponse = await fetch(`${httpUrl}/info`);
-                if (infoResponse.ok) {
-                  const infoData = await infoResponse.json();
-                  if (infoData.isRelay) {
-                    isRelay = true;
-                    if (!health) {
-                      health = {
-                        status: 'healthy',
-                        storedBlobs: 0,
-                        totalSize: 0,
-                        uptime: infoData.uptime || 0,
-                        successRate: 1,
-                        peers: infoData.connections || 0,
-                        requestsLastHour: 0,
-                        avgResponseTime: 0,
-                        peerId: peer.peerId,
-                        nodeId: infoData.nodeId || 'relay'
-                      };
-                    } else {
-                      health.nodeId = infoData.nodeId || 'relay';
-                    }
-                  }
-                }
-              } catch (err) {
-                // Info endpoint not available, not a relay
-              }
-            } else {
-              console.warn(`[VaultTab] No HTTP URL available for peer ${peer.peerId.slice(0, 12)}`);
+            }
+            
+            if (!health) {
+              console.warn(`[VaultTab] Could not fetch health for peer ${peer.peerId.slice(0, 12)} from any URL`);
             }
 
             return {
@@ -771,6 +759,9 @@ export const VaultTab: React.FC = () => {
                 });
                 const isRegistered = nodeData?.isRegistered || false;
                 const health = nodeData?.health;
+                console.log('peer', peer);
+                console.log('nodeData', nodeData);
+                console.log('health', health);
                 
                 return (
                   <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
@@ -779,7 +770,7 @@ export const VaultTab: React.FC = () => {
                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
                         <div className="flex flex-col">
                           <span className="text-sm text-white font-medium">
-                            {health?.nodeId || 'Unknown Node'}
+                            {health?.isRelay ? 'Relay' : health?.nodeId || 'Unknown Node'}
                           </span>
                           <span className="text-xs text-gray-400 font-mono">
                             {peer.peerId.slice(0, 4)}....{peer.peerId.slice(-4)}

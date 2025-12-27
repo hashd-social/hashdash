@@ -90,8 +90,8 @@ export function useByteCave(): UseByteCaveReturn {
 
     // Set up event listeners
     const handleStateChange = (state: ConnectionState) => setConnectionState(state);
-    const handlePeerUpdate = () => {
-      const peers = client.getPeers();
+    const handlePeerUpdate = async () => {
+      const peers = await client.getPeers();
       console.log('[useByteCave] handlePeerUpdate - peers:', peers.length, peers.map(p => p.peerId.slice(0, 12)));
       setPeers(peers);
     };
@@ -103,7 +103,10 @@ export function useByteCave(): UseByteCaveReturn {
 
     // Sync initial state
     setConnectionState(client.getConnectionState());
-    setPeers(client.getPeers());
+    (async () => {
+      const peers = await client.getPeers();
+      setPeers(peers);
+    })();
 
     return () => {
       client.off('connectionStateChange', handleStateChange);
@@ -126,9 +129,9 @@ export function useByteCave(): UseByteCaveReturn {
       setError(null);
       await globalClient.start();
       // Update peers after connections complete - start() returns before dials finish
-      const updatePeers = () => {
+      const updatePeers = async () => {
         if (globalClient) {
-          const peers = globalClient.getPeers();
+          const peers = await globalClient.getPeers();
           console.log('[useByteCave] Updating peers:', peers.length);
           setPeers(peers);
         }

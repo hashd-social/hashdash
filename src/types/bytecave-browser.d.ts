@@ -37,7 +37,7 @@ declare module '@hashd/bytecave-browser' {
     stop(): Promise<void>;
     store(data: Uint8Array, contentType?: string): Promise<StoreResult>;
     retrieve(cid: string): Promise<RetrieveResult>;
-    getPeers(): PeerInfo[];
+    getPeers(): Promise<PeerInfo[]>;
     getConnectionState(): ConnectionState;
     on(event: string, callback: Function): void;
     off(event: string, callback: Function): void;
