@@ -759,9 +759,6 @@ export const VaultTab: React.FC = () => {
                 });
                 const isRegistered = nodeData?.isRegistered || false;
                 const health = nodeData?.health;
-                console.log('peer', peer);
-                console.log('nodeData', nodeData);
-                console.log('health', health);
                 
                 return (
                   <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
