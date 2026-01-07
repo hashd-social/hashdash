@@ -528,23 +528,14 @@ export const VaultTab: React.FC = () => {
         }
       }
       
-      // Only prompt if we couldn't get public key from health or P2P
+      // Fail early if we couldn't get public key automatically
       if (!publicKey) {
-        const inputKey = prompt('Enter node public key (hex format):');
-        if (!inputKey) {
-          alert('Public key is required for registration');
-          return;
-        }
-        publicKey = inputKey;
+        alert('Unable to retrieve node public key. Please ensure the node is running and accessible via P2P or HTTP.');
+        return;
       }
       
       if (!nodeUrl) {
-        const inputUrl = prompt('Enter node URL (e.g., http://localhost:5001 or p2p://peerId):', `p2p://${peerId}`);
-        if (!inputUrl) {
-          alert('Node URL is required for registration');
-          return;
-        }
-        nodeUrl = inputUrl;
+        nodeUrl = `p2p://${peerId}`;
       }
 
       // Get signer
@@ -558,26 +549,18 @@ export const VaultTab: React.FC = () => {
       const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS!, VAULT_REGISTRY_ABI, signer);
       const metadataHash = ethers.id('bytecave-node');
 
-      // Convert DER-encoded public key to raw bytes if needed
-      let publicKeyBytes = publicKey;
-      if (publicKey.startsWith('302a')) {
-        // DER-encoded Ed25519 public key (44 bytes)
-        // Format: 302a300506032b6570032100[32 bytes of actual key]
-        // Extract last 32 bytes (raw Ed25519 public key)
-        console.log('[VaultTab] Converting DER-encoded public key to raw bytes');
-        publicKeyBytes = '0x' + publicKey.slice(-64); // Last 32 bytes in hex
-      } else if (!publicKey.startsWith('0x')) {
-        // Add 0x prefix if missing
-        publicKeyBytes = '0x' + publicKey;
-      }
+      // Use the FULL DER-encoded public key (contract hashes the entire key)
+      // DO NOT extract raw bytes - the contract expects the complete DER format
+      let publicKeyBytes = publicKey.startsWith('0x') ? publicKey : '0x' + publicKey;
 
-      console.log('[VaultTab] Registering with public key:', publicKeyBytes);
+      console.log('[VaultTab] Public key (DER-encoded):', publicKeyBytes);
       console.log('[VaultTab] Node URL:', nodeUrl);
       console.log('[VaultTab] Owner will be:', finalOwner, '(msg.sender)');
       
-      // Check if node is already registered
+      // Calculate nodeId the same way the contract does: keccak256(full DER public key)
       const nodeId = ethers.keccak256(publicKeyBytes);
-      console.log('[VaultTab] Node ID will be:', nodeId);
+      console.log('[VaultTab] Node ID (keccak256 of public key):', nodeId);
+      console.log('[VaultTab] NOTE: NodeId is based on public key hash, NOT libp2p peerId');
       
       try {
         const existingNode = await contract.getNode(nodeId);
@@ -588,6 +571,22 @@ export const VaultTab: React.FC = () => {
         console.log('[VaultTab] Node exists but inactive, will re-register');
       } catch (err) {
         console.log('[VaultTab] Node not found, proceeding with registration');
+      }
+      
+      // Show confirmation with all details
+      const confirmMessage = `Register this node?\n\n` +
+        `Node ID: ${nodeId.slice(0, 10)}...${nodeId.slice(-8)}\n` +
+        `Public Key: ${publicKeyBytes.slice(0, 10)}...${publicKeyBytes.slice(-8)}\n` +
+        `URL: ${nodeUrl}\n` +
+        `Owner: ${finalOwner}\n` +
+        `Stake: 1000 HASHD\n\n` +
+        `⚠️ IMPORTANT:\n` +
+        `• Node ID is based on PUBLIC KEY hash (not peerId)\n` +
+        `• If you rebuild the node, the peerId changes but Node ID stays the same\n` +
+        `• Make sure this is the correct node before registering`;
+      
+      if (!window.confirm(confirmMessage)) {
+        return;
       }
       
       // Stake amount: 1000 HASHD tokens (18 decimals)
