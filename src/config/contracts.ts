@@ -11,6 +11,7 @@ export const CONTRACT_ADDRESSES = {
   USER_PROFILE_STORAGE: process.env.REACT_APP_USER_PROFILE_STORAGE || '',
   GROUP_FACTORY_STORAGE: process.env.REACT_APP_GROUP_FACTORY_STORAGE || '',
   VAULT_REGISTRY_STORAGE: process.env.REACT_APP_VAULT_REGISTRY_STORAGE || '',
+  APP_REGISTRY_STORAGE: process.env.REACT_APP_APP_REGISTRY_STORAGE || '',
   
   // Platform Treasury (UUPS Upgradeable)
   PLATFORM_TREASURY: process.env.REACT_APP_PLATFORM_TREASURY || '',
@@ -27,6 +28,8 @@ export const CONTRACT_ADDRESSES = {
   GROUP_FACTORY: process.env.REACT_APP_GROUP_FACTORY || '',
   DEPLOYMENT_REGISTRY: process.env.REACT_APP_DEPLOYMENT_REGISTRY || '',
   VAULT_REGISTRY: process.env.REACT_APP_VAULT_REGISTRY || '',
+  VAULT_INCENTIVES: process.env.REACT_APP_VAULT_INCENTIVES || '',
+  APP_REGISTRY: process.env.REACT_APP_APP_REGISTRY || '',
 };
 
 // Network configuration
@@ -112,6 +115,7 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'UserProfileStorage', address: CONTRACT_ADDRESSES.USER_PROFILE_STORAGE, type: 'storage' as const },
     { name: 'GroupFactoryStorage', address: CONTRACT_ADDRESSES.GROUP_FACTORY_STORAGE, type: 'storage' as const },
     { name: 'VaultNodeRegistryStorage', address: CONTRACT_ADDRESSES.VAULT_REGISTRY_STORAGE, type: 'storage' as const },
+    { name: 'AppRegistryStorage', address: CONTRACT_ADDRESSES.APP_REGISTRY_STORAGE, type: 'storage' as const },
     // Logic contracts
     { name: 'KeyRegistry', address: CONTRACT_ADDRESSES.KEY_REGISTRY, type: 'logic' as const },
     { name: 'AccountRegistry', address: CONTRACT_ADDRESSES.ACCOUNT_REGISTRY, type: 'logic' as const },
@@ -124,7 +128,9 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'BondingCurveDeployer', address: CONTRACT_ADDRESSES.BONDING_CURVE_DEPLOYER, type: 'logic' as const },
     { name: 'GroupFactory', address: CONTRACT_ADDRESSES.GROUP_FACTORY, type: 'logic' as const },
     { name: 'DeploymentRegistry', address: CONTRACT_ADDRESSES.DEPLOYMENT_REGISTRY, type: 'logic' as const },
-    { name: 'VaultNodeRegistryV1', address: CONTRACT_ADDRESSES.VAULT_REGISTRY, type: 'logic' as const },
+    { name: 'VaultNodeRegistry', address: CONTRACT_ADDRESSES.VAULT_REGISTRY, type: 'logic' as const },
+    { name: 'VaultIncentives', address: CONTRACT_ADDRESSES.VAULT_INCENTIVES, type: 'logic' as const },
+    { name: 'AppRegistry', address: CONTRACT_ADDRESSES.APP_REGISTRY, type: 'logic' as const },
   ];
   return contracts.filter(c => c.address);
 }
