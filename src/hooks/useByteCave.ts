@@ -26,6 +26,22 @@ interface NodeHealth {
   blobCount: number;
   storageUsed: number;
   uptime: number;
+  nodeId?: string;
+  publicKey?: string;
+  ownerAddress?: string;
+  metrics?: {
+    requestsLastHour: number;
+    avgResponseTime: number;
+    successRate: number;
+  };
+  integrity?: {
+    checked: number;
+    passed: number;
+    failed: number;
+    orphaned: number;
+    metadataTampered: number;
+    failedCids: string[];
+  };
 }
 
 interface UseByteCaveReturn {
