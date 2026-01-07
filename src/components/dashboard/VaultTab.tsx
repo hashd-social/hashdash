@@ -499,8 +499,8 @@ export const VaultTab: React.FC = () => {
         return false;
       });
 
-      // Try to get public key from health data first
-      if (nodeData?.url) {
+      // Try to get public key from health data first (HTTP only)
+      if (nodeData?.url && !nodeData.url.startsWith('p2p://')) {
         try {
           const response = await fetch(`${nodeData.url}/health`);
           if (response.ok) {
@@ -515,7 +515,7 @@ export const VaultTab: React.FC = () => {
         }
       }
 
-      // Try P2P if health data not available
+      // Try P2P if health data not available or if URL is p2p://
       if (!publicKey && p2pConnected && peer.connected) {
         console.log('[VaultTab] Trying P2P for node info:', peerId);
         const info = await getNodeInfo(peerId);
