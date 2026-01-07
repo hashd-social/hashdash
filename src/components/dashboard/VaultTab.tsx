@@ -229,17 +229,20 @@ export const VaultTab: React.FC = () => {
       }));
 
       // Add P2P discovered peers that aren't registered
-      const registeredPeerIds = new Set(registeredNodesWithHealth.map(n => n.nodeId));
+      // Build a map of registered public keys to check against
+      const registeredPublicKeys = new Set(registeredNodesWithHealth.map(n => n.publicKey.toLowerCase()));
       
       // Extract relay peer ID from env to skip it - relay doesn't have ByteCave health protocol
       const relayPeerId = process.env.REACT_APP_RELAY_PEERS?.split('/p2p/')[1];
       
       const unregisteredP2PPeers: NodeWithHealth[] = await Promise.all(
         p2pPeers
-          .filter(peer => !registeredPeerIds.has(peer.peerId))
           .filter(peer => peer.peerId !== relayPeerId) // Skip relay - it doesn't have health protocol
           .map(async (peer) => {
+            // Get health to check public key
             let health = undefined;
+            let isRegistered = false;
+            let publicKey = '';
             
             // Get health via P2P only - no HTTP fallback
             if (p2pConnected) {
@@ -247,6 +250,15 @@ export const VaultTab: React.FC = () => {
                 console.log(`[VaultTab] Getting P2P health for peer ${peer.peerId.slice(0, 12)}`);
                 const p2pHealth = await getNodeHealth(peer.peerId);
                 if (p2pHealth) {
+                  // Store public key
+                  publicKey = p2pHealth.publicKey || '';
+                  
+                  // Check if this peer's public key is registered
+                  if (publicKey && registeredPublicKeys.has(publicKey.toLowerCase())) {
+                    isRegistered = true;
+                    console.log(`[VaultTab] Peer ${peer.peerId.slice(0, 12)} is registered (matched by public key)`);
+                  }
+                  
                   health = {
                     status: p2pHealth.status,
                     storedBlobs: p2pHealth.blobCount || 0,
@@ -270,14 +282,14 @@ export const VaultTab: React.FC = () => {
             return {
               nodeId: peer.peerId,
               owner: '',
-              publicKey: '',
+              publicKey,
               url: `p2p://${peer.peerId}`,
               metadataHash: '',
               registeredAt: 0,
               active: peer.connected,
               loading: false,
               health,
-              isRegistered: false
+              isRegistered
             };
           })
       );
@@ -492,40 +504,20 @@ export const VaultTab: React.FC = () => {
       let ownerAddress: string | undefined;
       let nodeUrl: string | undefined;
 
-      // Get node data from health endpoint
-      const nodeData = nodes.find(n => {
-        if (n.health?.peerId) return n.health.peerId === peerId;
-        if (n.nodeId === peerId) return true;
-        return false;
-      });
-
-      // Try to get public key from health data first (HTTP only)
-      if (nodeData?.url && !nodeData.url.startsWith('p2p://')) {
-        try {
-          const response = await fetch(`${nodeData.url}/health`);
-          if (response.ok) {
-            const healthData = await response.json();
-            publicKey = healthData.publicKey;
-            ownerAddress = healthData.ownerAddress;
-            nodeUrl = nodeData.url;
-            console.log('[VaultTab] Got public key from health endpoint:', publicKey);
-          }
-        } catch (err) {
-          console.warn('[VaultTab] Failed to fetch health data for registration:', err);
-        }
+      // Get public key via P2P ONLY - no HTTP fallback
+      if (!p2pConnected || !peer.connected) {
+        alert('P2P connection required for registration. Please ensure you are connected to the P2P network.');
+        return;
       }
 
-      // Try P2P if health data not available or if URL is p2p://
-      if (!publicKey && p2pConnected && peer.connected) {
-        console.log('[VaultTab] Trying P2P for node info:', peerId);
-        const info = await getNodeInfo(peerId);
-        
-        if (info && info.publicKey) {
-          console.log('[VaultTab] Got P2P node info:', info);
-          publicKey = info.publicKey;
-          ownerAddress = info.ownerAddress;
-          nodeUrl = `p2p://${peerId}`;
-        }
+      console.log('[VaultTab] Getting node info via P2P:', peerId);
+      const health = await getNodeHealth(peerId);
+      
+      if (health && health.publicKey) {
+        console.log('[VaultTab] Got P2P node health with public key:', health.publicKey);
+        publicKey = health.publicKey;
+        ownerAddress = health.ownerAddress;
+        nodeUrl = `p2p://${peerId}`;
       }
       
       // Fail early if we couldn't get public key automatically
