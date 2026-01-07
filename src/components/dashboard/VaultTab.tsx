@@ -72,10 +72,11 @@ interface ReplicationStats {
 }
 
 const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY;
+const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
 
-// ABI for VaultNodeRegistryV1
+// ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
-  'function addNode(address _owner, bytes _publicKey, string _url, bytes32 _metadataHash) external returns (bytes32)',
+  'function registerNode(bytes _publicKey, string _url, bytes32 _metadataHash, uint256 _stakeAmount) external returns (bytes32)',
   'function removeNode(bytes32 _nodeId) external',
   'function updateNode(bytes32 _nodeId, string _url, bytes32 _metadataHash) external',
   'function reactivateNode(bytes32 _nodeId) external',
@@ -83,6 +84,13 @@ const VAULT_REGISTRY_ABI = [
   'function getAllNodes(uint256 _offset, uint256 _limit) external view returns (bytes32[])',
   'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string url, bytes32 metadataHash, uint256 registeredAt, bool active))',
   'function getNodeCount() external view returns (uint256 total, uint256 active)'
+];
+
+// ERC20 ABI for HASHD token
+const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+  'function balanceOf(address account) external view returns (uint256)'
 ];
 
 export const VaultTab: React.FC = () => {
@@ -184,17 +192,19 @@ export const VaultTab: React.FC = () => {
               console.log(`[VaultTab] Trying P2P health for peer ${peer.peerId.slice(0, 12)}...`);
               const p2pHealth = await getNodeHealth(peer.peerId);
               if (p2pHealth) {
-                console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}`);
+                console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}:`, p2pHealth);
                 return {
                   status: p2pHealth.status,
                   storedBlobs: p2pHealth.blobCount || 0,
                   totalSize: p2pHealth.storageUsed || 0,
                   uptime: p2pHealth.uptime || 0,
-                  successRate: 1,
+                  successRate: p2pHealth.metrics?.successRate || 1,
                   peers: 0,
-                  requestsLastHour: 0,
-                  avgResponseTime: 0,
-                  peerId: peer.peerId
+                  requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
+                  avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
+                  peerId: peer.peerId,
+                  nodeId: p2pHealth.nodeId,
+                  integrity: p2pHealth.integrity
                 };
               }
             } catch (err) {
@@ -220,64 +230,48 @@ export const VaultTab: React.FC = () => {
 
       // Add P2P discovered peers that aren't registered
       const registeredPeerIds = new Set(registeredNodesWithHealth.map(n => n.nodeId));
+      
+      // Extract relay peer ID from env to skip it - relay doesn't have ByteCave health protocol
+      const relayPeerId = process.env.REACT_APP_RELAY_PEERS?.split('/p2p/')[1];
+      
       const unregisteredP2PPeers: NodeWithHealth[] = await Promise.all(
         p2pPeers
           .filter(peer => !registeredPeerIds.has(peer.peerId))
+          .filter(peer => peer.peerId !== relayPeerId) // Skip relay - it doesn't have health protocol
           .map(async (peer) => {
             let health = undefined;
-            let httpUrl = (peer as any).httpUrl;
             
-            // Try to fetch health data from the peer
-            // First try the provided httpUrl, then try common endpoints
-            const urlsToTry = [];
-            if (httpUrl) urlsToTry.push(httpUrl);
-            
-            // Check if this is the relay peer by comparing peer ID with configured relay
-            const relayPeers = process.env.REACT_APP_RELAY_PEERS?.split(',') || [];
-            const isRelayPeer = relayPeers.some(addr => addr.includes(peer.peerId));
-            
-            if (isRelayPeer) {
-              urlsToTry.push('http://localhost:9090');
-            }
-            
-            for (const url of urlsToTry) {
+            // Get health via P2P only - no HTTP fallback
+            if (p2pConnected) {
               try {
-                console.log(`[VaultTab] Trying to fetch health from ${url}/health for peer ${peer.peerId.slice(0, 12)}`);
-                const response = await fetch(`${url}/health`);
-                if (response.ok) {
-                  const data = await response.json();
-                  console.log(`[VaultTab] Got health data from ${url}:`, data);
-                  httpUrl = url;
+                console.log(`[VaultTab] Getting P2P health for peer ${peer.peerId.slice(0, 12)}`);
+                const p2pHealth = await getNodeHealth(peer.peerId);
+                if (p2pHealth) {
                   health = {
-                    status: data.status || 'unknown',
-                    storedBlobs: data.storedBlobs || 0,
-                    totalSize: data.totalSize || 0,
-                    uptime: data.uptime || 0,
-                    successRate: data.metrics?.successRate || 1,
-                    peers: data.p2p?.connected || 0,
-                    requestsLastHour: data.metrics?.requestsLastHour || 0,
-                    avgResponseTime: data.metrics?.avgResponseTime || 0,
+                    status: p2pHealth.status,
+                    storedBlobs: p2pHealth.blobCount || 0,
+                    totalSize: p2pHealth.storageUsed || 0,
+                    uptime: p2pHealth.uptime || 0,
+                    successRate: p2pHealth.metrics?.successRate || 1,
+                    peers: 0,
+                    requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
+                    avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
                     peerId: peer.peerId,
-                    integrity: data.integrity,
-                    nodeId: data.nodeId,
-                    isRelay: data.isRelay || false
+                    nodeId: p2pHealth.nodeId,
+                    integrity: p2pHealth.integrity
                   };
-                  break; // Success, stop trying other URLs
+                  console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}:`, p2pHealth);
                 }
               } catch (err) {
-                console.warn(`Failed to fetch health from ${url} for peer ${peer.peerId.slice(0, 12)}:`, err);
+                console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}:`, err);
               }
-            }
-            
-            if (!health) {
-              console.warn(`[VaultTab] Could not fetch health for peer ${peer.peerId.slice(0, 12)} from any URL`);
             }
 
             return {
               nodeId: peer.peerId,
               owner: '',
               publicKey: '',
-              url: httpUrl || `p2p://${peer.peerId}`,
+              url: `p2p://${peer.peerId}`,
               metadataHash: '',
               registeredAt: 0,
               active: peer.connected,
@@ -337,13 +331,32 @@ export const VaultTab: React.FC = () => {
         ? formData.publicKey 
         : `0x${formData.publicKey}`;
 
-      const tx = await contract.addNode(
-        formData.ownerAddress,
+      // Stake amount: 1000 HASHD tokens
+      const stakeAmount = ethers.parseEther('1000');
+      
+      // Get HASHD token contract
+      const hashdToken = new ethers.Contract(HASHD_TOKEN_ADDRESS!, ERC20_ABI, signer);
+      
+      // Check balance
+      const balance = await hashdToken.balanceOf(await signer.getAddress());
+      if (balance < stakeAmount) {
+        alert(`Insufficient HASHD balance. Need ${ethers.formatEther(stakeAmount)} HASHD`);
+        return;
+      }
+      
+      // Approve if needed
+      const allowance = await hashdToken.allowance(await signer.getAddress(), VAULT_REGISTRY_ADDRESS);
+      if (allowance < stakeAmount) {
+        const approveTx = await hashdToken.approve(VAULT_REGISTRY_ADDRESS, stakeAmount);
+        await approveTx.wait();
+      }
+      
+      const tx = await contract.registerNode(
         publicKeyBytes,
         formData.url,
-        metadataHash
+        metadataHash,
+        stakeAmount
       );
-
       await tx.wait();
       
       alert('Node added successfully!');
@@ -545,7 +558,68 @@ export const VaultTab: React.FC = () => {
       const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS!, VAULT_REGISTRY_ABI, signer);
       const metadataHash = ethers.id('bytecave-node');
 
-      const tx = await contract.addNode(finalOwner, publicKey, nodeUrl!, metadataHash);
+      // Convert DER-encoded public key to raw bytes if needed
+      let publicKeyBytes = publicKey;
+      if (publicKey.startsWith('302a')) {
+        // DER-encoded Ed25519 public key (44 bytes)
+        // Format: 302a300506032b6570032100[32 bytes of actual key]
+        // Extract last 32 bytes (raw Ed25519 public key)
+        console.log('[VaultTab] Converting DER-encoded public key to raw bytes');
+        publicKeyBytes = '0x' + publicKey.slice(-64); // Last 32 bytes in hex
+      } else if (!publicKey.startsWith('0x')) {
+        // Add 0x prefix if missing
+        publicKeyBytes = '0x' + publicKey;
+      }
+
+      console.log('[VaultTab] Registering with public key:', publicKeyBytes);
+      console.log('[VaultTab] Node URL:', nodeUrl);
+      console.log('[VaultTab] Owner will be:', finalOwner, '(msg.sender)');
+      
+      // Check if node is already registered
+      const nodeId = ethers.keccak256(publicKeyBytes);
+      console.log('[VaultTab] Node ID will be:', nodeId);
+      
+      try {
+        const existingNode = await contract.getNode(nodeId);
+        if (existingNode.active) {
+          alert('This node is already registered and active!');
+          return;
+        }
+        console.log('[VaultTab] Node exists but inactive, will re-register');
+      } catch (err) {
+        console.log('[VaultTab] Node not found, proceeding with registration');
+      }
+      
+      // Stake amount: 1000 HASHD tokens (18 decimals)
+      const stakeAmount = ethers.parseEther('1000');
+      console.log('[VaultTab] Stake amount:', ethers.formatEther(stakeAmount), 'HASHD');
+      
+      // Get HASHD token contract
+      const hashdToken = new ethers.Contract(HASHD_TOKEN_ADDRESS!, ERC20_ABI, signer);
+      
+      // Check balance
+      const balance = await hashdToken.balanceOf(signerAddress);
+      console.log('[VaultTab] HASHD balance:', ethers.formatEther(balance));
+      if (balance < stakeAmount) {
+        alert(`Insufficient HASHD balance. Need ${ethers.formatEther(stakeAmount)} HASHD, have ${ethers.formatEther(balance)}`);
+        return;
+      }
+      
+      // Check allowance
+      const allowance = await hashdToken.allowance(signerAddress, VAULT_REGISTRY_ADDRESS);
+      console.log('[VaultTab] Current allowance:', ethers.formatEther(allowance));
+      
+      // Approve if needed
+      if (allowance < stakeAmount) {
+        console.log('[VaultTab] Approving HASHD tokens...');
+        const approveTx = await hashdToken.approve(VAULT_REGISTRY_ADDRESS, stakeAmount);
+        await approveTx.wait();
+        console.log('[VaultTab] HASHD tokens approved');
+      }
+      
+      // Register node with HASHD token stake
+      console.log('[VaultTab] Registering node...');
+      const tx = await contract.registerNode(publicKeyBytes, nodeUrl!, metadataHash, stakeAmount);
       await tx.wait();
 
       alert('Node registered successfully!');
