@@ -186,26 +186,37 @@ export const VaultTab: React.FC = () => {
         
         // Try to get health via P2P for all connected peers
         if (p2pConnected && p2pPeers.length > 0) {
-          // Try each connected peer to find one that matches this node
+          // Try each connected peer to find one that matches this node's public key
           for (const peer of p2pPeers) {
             try {
-              console.log(`[VaultTab] Trying P2P health for peer ${peer.peerId.slice(0, 12)}...`);
+              console.log(`[VaultTab] Trying P2P health for peer ${peer.peerId.slice(0, 12)} to match node ${node.nodeId.slice(0, 12)}...`);
               const p2pHealth = await getNodeHealth(peer.peerId);
-              if (p2pHealth) {
-                console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}:`, p2pHealth);
-                return {
-                  status: p2pHealth.status,
-                  storedBlobs: p2pHealth.blobCount || 0,
-                  totalSize: p2pHealth.storageUsed || 0,
-                  uptime: p2pHealth.uptime || 0,
-                  successRate: p2pHealth.metrics?.successRate || 1,
-                  peers: 0,
-                  requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
-                  avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
-                  peerId: peer.peerId,
-                  nodeId: p2pHealth.nodeId,
-                  integrity: p2pHealth.integrity
-                };
+              if (p2pHealth && p2pHealth.publicKey) {
+                // Normalize public keys for comparison (add 0x prefix if missing)
+                const normalizedP2PKey = p2pHealth.publicKey.startsWith('0x') 
+                  ? p2pHealth.publicKey.toLowerCase() 
+                  : '0x' + p2pHealth.publicKey.toLowerCase();
+                const normalizedNodeKey = node.publicKey.toLowerCase();
+                
+                // Match by public key - this is the authoritative identifier
+                if (normalizedP2PKey === normalizedNodeKey) {
+                  console.log(`[VaultTab] ✓ Matched peer ${peer.peerId.slice(0, 12)} to registered node ${node.nodeId.slice(0, 12)} by public key`);
+                  return {
+                    status: p2pHealth.status,
+                    storedBlobs: p2pHealth.blobCount || 0,
+                    totalSize: p2pHealth.storageUsed || 0,
+                    uptime: p2pHealth.uptime || 0,
+                    successRate: p2pHealth.metrics?.successRate || 1,
+                    peers: 0,
+                    requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
+                    avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
+                    peerId: peer.peerId,
+                    nodeId: p2pHealth.nodeId,
+                    integrity: p2pHealth.integrity
+                  };
+                } else {
+                  console.log(`[VaultTab] ✗ Peer ${peer.peerId.slice(0, 12)} public key doesn't match node ${node.nodeId.slice(0, 12)}`);
+                }
               }
             } catch (err) {
               console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}`);
@@ -214,7 +225,7 @@ export const VaultTab: React.FC = () => {
         }
 
         // No P2P available - return null (node unreachable)
-        console.log(`[VaultTab] No P2P connection available for node ${node.nodeId.slice(0, 12)}`);
+        console.log(`[VaultTab] No P2P peer found matching registered node ${node.nodeId.slice(0, 12)}`);
         return null;
       });
 
@@ -254,9 +265,16 @@ export const VaultTab: React.FC = () => {
                   publicKey = p2pHealth.publicKey || '';
                   
                   // Check if this peer's public key is registered
-                  if (publicKey && registeredPublicKeys.has(publicKey.toLowerCase())) {
-                    isRegistered = true;
-                    console.log(`[VaultTab] Peer ${peer.peerId.slice(0, 12)} is registered (matched by public key)`);
+                  // Normalize public key format (add 0x prefix if missing)
+                  if (publicKey) {
+                    const normalizedKey = publicKey.startsWith('0x') 
+                      ? publicKey.toLowerCase() 
+                      : '0x' + publicKey.toLowerCase();
+                    
+                    if (registeredPublicKeys.has(normalizedKey)) {
+                      isRegistered = true;
+                      console.log(`[VaultTab] Peer ${peer.peerId.slice(0, 12)} is registered (matched by public key)`);
+                    }
                   }
                   
                   health = {
