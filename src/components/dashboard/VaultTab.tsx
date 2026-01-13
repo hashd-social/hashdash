@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
 import { useByteCave } from '../../hooks/useByteCave';
+import { useHashdUrl } from '../../hooks/useHashdUrl';
+import { CidViewer } from './CidViewer';
 import { 
   Database, 
   RefreshCw, 
@@ -14,6 +16,10 @@ import {
 } from 'lucide-react';
 
 // Interfaces
+interface VaultTabProps {
+  userAddress: string;
+}
+
 interface NodeInfo {
   nodeId: string;
   owner: string;
@@ -36,6 +42,8 @@ interface NodeHealth {
   peerId?: string;
   nodeId?: string;
   isRelay?: boolean;
+  version?: string;
+  minVersion?: string;
   integrity?: {
     checked: number;
     passed: number;
@@ -76,14 +84,18 @@ const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
 
 // ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
-  'function registerNode(bytes _publicKey, string _url, bytes32 _metadataHash, uint256 _stakeAmount) external returns (bytes32)',
-  'function removeNode(bytes32 _nodeId) external',
+  'function registerNode(bytes _publicKey, string _peerId, bytes32 _metadataHash, uint256 _stakeAmount) external returns (bytes32)',
+  'function deregisterNode(bytes32 _nodeId) external',
   'function updateNode(bytes32 _nodeId, string _url, bytes32 _metadataHash) external',
   'function reactivateNode(bytes32 _nodeId) external',
   'function getActiveNodes() external view returns (bytes32[])',
   'function getAllNodes(uint256 _offset, uint256 _limit) external view returns (bytes32[])',
-  'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string url, bytes32 metadataHash, uint256 registeredAt, bool active))',
-  'function getNodeCount() external view returns (uint256 total, uint256 active)'
+  'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string peerId, bytes32 metadataHash, uint256 registeredAt, bool active))',
+  'function getNodeCount() external view returns (uint256 total, uint256 active)',
+  'function setReplicationFactor(uint256 _factor) external',
+  'function replicationFactor() external view returns (uint256)',
+  'function setMinVersion(string _version) external',
+  'function minVersion() external view returns (string)'
 ];
 
 // ERC20 ABI for HASHD token
@@ -93,7 +105,7 @@ const ERC20_ABI = [
   'function balanceOf(address account) external view returns (uint256)'
 ];
 
-export const VaultTab: React.FC = () => {
+export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
   // P2P WebRTC client
   const { 
     connectionState: p2pState, 
@@ -130,7 +142,14 @@ export const VaultTab: React.FC = () => {
   const [storageResult, setStorageResult] = useState<{ cid?: string; error?: string } | null>(null);
   const [storing, setStoring] = useState(false);
 
+  // Vault Node Registry Configstate
+  const [replicationFactor, setReplicationFactorInput] = useState('3');
+  const [minVersion, setMinVersionInput] = useState('1.0.0');
+  const [settingReplicationFactor, setSettingReplicationFactor] = useState(false);
+  const [settingMinVersion, setSettingMinVersion] = useState(false);
+
   useEffect(() => {
+    console.log('[VaultTab] p2pPeers changed, count:', p2pPeers.length, 'peers:', p2pPeers.map(p => p.peerId.slice(0, 8)));
     fetchData();
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
@@ -139,194 +158,103 @@ export const VaultTab: React.FC = () => {
 
   async function fetchData() {
     try {
-      if (!VAULT_REGISTRY_ADDRESS) {
-        console.error('REACT_APP_VAULT_REGISTRY not configured');
+      // PURE P2P DISCOVERY - Skip on-chain registry query
+      // Discover nodes directly from P2P network via relay peer directory
+      console.log('[VaultTab] Using pure P2P discovery, skipping on-chain registry');
+      console.log('[VaultTab] P2P state:', p2pState, 'Connected:', p2pConnected, 'Peers:', p2pPeers.length);
+      
+      if (p2pPeers.length === 0) {
+        console.log('[VaultTab] No P2P peers available yet');
         setLoading(false);
         return;
       }
 
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, provider);
-
-      // Get node counts
-      const [total, active] = await contract.getNodeCount();
-      const totalNodes = Number(total);
-      const activeNodes = Number(active);
-
-      // Get all nodes (including deactivated) for display - only if there are nodes
-      let nodeIds: string[] = [];
-      if (totalNodes > 0) {
-        nodeIds = await contract.getAllNodes(0, 100);
-      }
-      
-      // Fetch details for each node
-      const nodeDetails: NodeWithHealth[] = await Promise.all(
-        nodeIds.map(async (nodeId: string) => {
-          const node = await contract.getNode(nodeId);
-          return {
-            nodeId,
-            owner: node[0],
-            publicKey: ethers.hexlify(node[1]),
-            url: node[2],
-            metadataHash: node[3],
-            registeredAt: Number(node[4]),
-            active: node[5],
-            loading: true
-          };
-        })
-      );
-
-      setNodes(nodeDetails);
-
-      // Fetch health stats for each active node via P2P ONLY
-      // No HTTP fallback - nodes must be reachable via P2P
-      const healthPromises = nodeDetails.map(async (node) => {
-        // Skip health check for inactive nodes
-        if (!node.active) return null;
-        
-        // Try to get health via P2P for all connected peers
-        if (p2pConnected && p2pPeers.length > 0) {
-          // Try each connected peer to find one that matches this node's public key
-          for (const peer of p2pPeers) {
-            try {
-              console.log(`[VaultTab] Trying P2P health for peer ${peer.peerId.slice(0, 12)} to match node ${node.nodeId.slice(0, 12)}...`);
-              const p2pHealth = await getNodeHealth(peer.peerId);
-              if (p2pHealth && p2pHealth.publicKey) {
-                // Normalize public keys for comparison (add 0x prefix if missing)
-                const normalizedP2PKey = p2pHealth.publicKey.startsWith('0x') 
-                  ? p2pHealth.publicKey.toLowerCase() 
-                  : '0x' + p2pHealth.publicKey.toLowerCase();
-                const normalizedNodeKey = node.publicKey.toLowerCase();
-                
-                // Match by public key - this is the authoritative identifier
-                if (normalizedP2PKey === normalizedNodeKey) {
-                  console.log(`[VaultTab] ✓ Matched peer ${peer.peerId.slice(0, 12)} to registered node ${node.nodeId.slice(0, 12)} by public key`);
-                  return {
-                    status: p2pHealth.status,
-                    storedBlobs: p2pHealth.blobCount || 0,
-                    totalSize: p2pHealth.storageUsed || 0,
-                    uptime: p2pHealth.uptime || 0,
-                    successRate: p2pHealth.metrics?.successRate || 1,
-                    peers: 0,
-                    requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
-                    avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
-                    peerId: peer.peerId,
-                    nodeId: p2pHealth.nodeId,
-                    integrity: p2pHealth.integrity
-                  };
-                } else {
-                  console.log(`[VaultTab] ✗ Peer ${peer.peerId.slice(0, 12)} public key doesn't match node ${node.nodeId.slice(0, 12)}`);
-                }
-              }
-            } catch (err) {
-              console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}`);
-            }
-          }
-        }
-
-        // No P2P available - return null (node unreachable)
-        console.log(`[VaultTab] No P2P peer found matching registered node ${node.nodeId.slice(0, 12)}`);
-        return null;
-      });
-
-      const healthStats = await Promise.all(healthPromises);
-
-      // Update registered nodes with health
-      const registeredNodesWithHealth = nodeDetails.map((node, i) => ({
-        ...node,
-        loading: false,
-        health: healthStats[i] || undefined,
-        isRegistered: true
-      }));
-
-      // Add P2P discovered peers that aren't registered
-      // Build a map of registered public keys to check against
-      const registeredPublicKeys = new Set(registeredNodesWithHealth.map(n => n.publicKey.toLowerCase()));
-      
-      // Extract relay peer ID from env to skip it - relay doesn't have ByteCave health protocol
-      const relayPeerId = process.env.REACT_APP_RELAY_PEERS?.split('/p2p/')[1];
-      
-      const unregisteredP2PPeers: NodeWithHealth[] = await Promise.all(
-        p2pPeers
-          .filter(peer => peer.peerId !== relayPeerId) // Skip relay - it doesn't have health protocol
-          .map(async (peer) => {
-            // Get health to check public key
-            let health = undefined;
-            let isRegistered = false;
-            let publicKey = '';
-            
-            // Get health via P2P only - no HTTP fallback
-            if (p2pConnected) {
-              try {
-                console.log(`[VaultTab] Getting P2P health for peer ${peer.peerId.slice(0, 12)}`);
-                const p2pHealth = await getNodeHealth(peer.peerId);
-                if (p2pHealth) {
-                  // Store public key
-                  publicKey = p2pHealth.publicKey || '';
-                  
-                  // Check if this peer's public key is registered
-                  // Normalize public key format (add 0x prefix if missing)
-                  if (publicKey) {
-                    const normalizedKey = publicKey.startsWith('0x') 
-                      ? publicKey.toLowerCase() 
-                      : '0x' + publicKey.toLowerCase();
-                    
-                    if (registeredPublicKeys.has(normalizedKey)) {
-                      isRegistered = true;
-                      console.log(`[VaultTab] Peer ${peer.peerId.slice(0, 12)} is registered (matched by public key)`);
-                    }
-                  }
-                  
-                  health = {
-                    status: p2pHealth.status,
-                    storedBlobs: p2pHealth.blobCount || 0,
-                    totalSize: p2pHealth.storageUsed || 0,
-                    uptime: p2pHealth.uptime || 0,
-                    successRate: p2pHealth.metrics?.successRate || 1,
-                    peers: 0,
-                    requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
-                    avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
-                    peerId: peer.peerId,
-                    nodeId: p2pHealth.nodeId,
-                    integrity: p2pHealth.integrity
-                  };
-                  console.log(`[VaultTab] Got P2P health from ${peer.peerId.slice(0, 12)}:`, p2pHealth);
-                }
-              } catch (err) {
-                console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}:`, err);
-              }
-            }
-
+      // Get health data from all P2P peers
+      const peerHealthPromises = p2pPeers.map(async (peer) => {
+        try {
+          console.log(`[VaultTab] Getting P2P health for peer ${peer.peerId.slice(0, 12)}`);
+          const p2pHealth = await getNodeHealth(peer.peerId);
+          if (p2pHealth) {
+            console.log(`[VaultTab] P2P health for ${peer.peerId.slice(0, 12)}:`, p2pHealth);
+            console.log(`[VaultTab] version=${(p2pHealth as any).version}, minVersion=${(p2pHealth as any).minVersion}`);
             return {
-              nodeId: peer.peerId,
+              nodeId: p2pHealth.nodeId || peer.peerId.slice(0, 12),
               owner: '',
-              publicKey,
-              url: `p2p://${peer.peerId}`,
+              publicKey: p2pHealth.publicKey || '',
+              url: '',
               metadataHash: '',
               registeredAt: 0,
-              active: peer.connected,
+              active: true,
               loading: false,
-              health,
-              isRegistered
+              isRegistered: (p2pHealth as any).registeredOnChain || false, // Get registration status from health data
+              health: {
+                status: p2pHealth.status,
+                storedBlobs: p2pHealth.blobCount || 0,
+                totalSize: p2pHealth.storageUsed || 0,
+                uptime: p2pHealth.uptime || 0,
+                successRate: p2pHealth.metrics?.successRate || 1,
+                peers: 0,
+                requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
+                avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
+                peerId: peer.peerId,
+                nodeId: p2pHealth.nodeId,
+                version: (p2pHealth as any).version,
+                minVersion: (p2pHealth as any).minVersion,
+                integrity: p2pHealth.integrity
+              }
             };
-          })
-      );
+          }
+          return null;
+        } catch (err) {
+          console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}`);
+          return null;
+        }
+      });
 
-      // Combine registered and unregistered peers
-      setNodes([...registeredNodesWithHealth, ...unregisteredP2PPeers]);
+      const peerHealthResults = await Promise.all(peerHealthPromises);
+      const discoveredNodes = peerHealthResults.filter(n => n !== null) as NodeWithHealth[];
 
-      // Aggregate network stats
-      const validHealth = healthStats.filter((h): h is NonNullable<typeof h> => h !== null);
-      const totalBlobs = validHealth.reduce((sum, h) => sum + h.storedBlobs, 0);
-      const totalSize = validHealth.reduce((sum, h) => sum + h.totalSize, 0);
+      console.log(`[VaultTab] Discovered ${discoveredNodes.length} nodes via P2P`);
+      
+      // Registration status now comes from health data - no need for separate contract calls
+      // Just get total node count for network stats
+      if (VAULT_REGISTRY_ADDRESS) {
+        try {
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, provider);
+          
+          // Get total registered nodes count for network stats
+          const [totalRegistered, activeRegistered] = await contract.getNodeCount();
+          
+          // Update network stats with on-chain data
+          setNetworkStats(prev => ({
+            ...prev!,
+            totalNodes: Number(totalRegistered),
+            activeNodes: Number(activeRegistered)
+          }));
+        } catch (err) {
+          console.warn('[VaultTab] Could not check on-chain registry:', err);
+        }
+      }
+      
+      // Set discovered nodes - registration status comes from health data
+      setNodes(discoveredNodes);
+
+      // Aggregate network stats from discovered nodes
+      const validHealth = discoveredNodes
+        .map(n => n.health)
+        .filter((h): h is NonNullable<typeof h> => h !== null && h !== undefined);
+      
+      const totalBlobs = validHealth.reduce((sum: number, h) => sum + h.storedBlobs, 0);
+      const totalSize = validHealth.reduce((sum: number, h) => sum + h.totalSize, 0);
       const healthyNodes = validHealth.filter(h => h.status === 'healthy').length;
       const avgSuccessRate = validHealth.length > 0
-        ? validHealth.reduce((sum, h) => sum + h.successRate, 0) / validHealth.length
+        ? validHealth.reduce((sum: number, h) => sum + h.successRate, 0) / validHealth.length
         : 0;
 
       setNetworkStats({
-        totalNodes,
-        activeNodes,
+        totalNodes: discoveredNodes.length,
+        activeNodes: discoveredNodes.filter(n => n.active).length,
         totalBlobs,
         totalSize,
         avgSuccessRate,
@@ -428,7 +356,7 @@ export const VaultTab: React.FC = () => {
   }
 
   async function handleRemoveNode(nodeId: string) {
-    if (!window.confirm('Are you sure you want to remove this node?')) return;
+    if (!window.confirm('Are you sure you want to deregister this node? Your stake will be returned.')) return;
 
     try {
       if (!VAULT_REGISTRY_ADDRESS) return;
@@ -437,13 +365,13 @@ export const VaultTab: React.FC = () => {
       const signer = await provider.getSigner();
       const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
 
-      const tx = await contract.removeNode(nodeId);
+      const tx = await contract.deregisterNode(nodeId);
       await tx.wait();
       
-      alert('Node deactivated successfully!');
+      alert('Node deregistered successfully! Your stake has been returned.');
       fetchData();
     } catch (error: any) {
-      console.error('Error deactivating node:', error);
+      console.error('Error deregistering node:', error);
       alert(`Error: ${error.message}`);
     }
   }
@@ -467,9 +395,85 @@ export const VaultTab: React.FC = () => {
     }
   }
 
+  async function handleSetReplicationFactor() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    const factor = parseInt(replicationFactor);
+    if (isNaN(factor) || factor < 1 || factor > 10) {
+      alert('Please enter a valid replication factor (1-10)');
+      return;
+    }
+
+    try {
+      setSettingReplicationFactor(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+
+      const tx = await contract.setReplicationFactor(factor);
+      await tx.wait();
+
+      alert(`✅ Replication factor set to ${factor}`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set replication factor:', error);
+      alert(`❌ Failed to set replication factor: ${error.message}`);
+    } finally {
+      setSettingReplicationFactor(false);
+    }
+  }
+
+  async function handleSetMinVersion() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!/^\d+\.\d+\.\d+$/.test(minVersion)) {
+      alert('Please enter a valid version (e.g., 1.0.0)');
+      return;
+    }
+
+    try {
+      setSettingMinVersion(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+
+      const tx = await contract.setMinVersion(minVersion);
+      await tx.wait();
+
+      alert(`✅ Minimum version set to ${minVersion}`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set min version:', error);
+      alert(`❌ Failed to set min version: ${error.message}`);
+    } finally {
+      setSettingMinVersion(false);
+    }
+  }
+
   async function handleTestStorage() {
     if (!testText.trim()) {
       alert('Please enter some text to store');
+      return;
+    }
+
+    if (!userAddress) {
+      alert('Please connect your wallet first');
       return;
     }
 
@@ -483,11 +487,17 @@ export const VaultTab: React.FC = () => {
       setStoring(true);
       setStorageResult(null);
 
-      const encryptedHex = await CryptoUtils.encryptText(testText);
-      const ciphertext = new Uint8Array(Buffer.from(encryptedHex, 'hex'));
+      // Create signer from MetaMask
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
 
-      // Use P2P store
-      const result = await p2pStore(ciphertext, 'text/plain');
+      const encryptedHex = await CryptoUtils.encryptText(testText);
+      // Remove 0x prefix before converting from hex
+      const hexString = encryptedHex.startsWith('0x') ? encryptedHex.slice(2) : encryptedHex;
+      const ciphertext = new Uint8Array(Buffer.from(hexString, 'hex'));
+
+      // Use P2P store with signer for authorization
+      const result = await p2pStore(ciphertext, 'text/plain', signer);
 
       if (!result.success) {
         throw new Error(result.error || 'Storage failed');
@@ -495,6 +505,7 @@ export const VaultTab: React.FC = () => {
 
       setStorageResult({ cid: result.cid });
       alert(`✅ Successfully stored via P2P!\nCID: ${result.cid}`);
+      setTestText(''); // Clear the text after successful storage
       setTimeout(() => fetchData(), 500);
     } catch (error: any) {
       console.error('Storage error:', error);
@@ -520,11 +531,17 @@ export const VaultTab: React.FC = () => {
     try {
       let publicKey: string | undefined;
       let ownerAddress: string | undefined;
-      let nodeUrl: string | undefined;
+      let nodePeerId: string | undefined;
 
       // Get public key via P2P ONLY - no HTTP fallback
-      if (!p2pConnected || !peer.connected) {
-        alert('P2P connection required for registration. Please ensure you are connected to the P2P network.');
+      // Check if we have any peers (more reliable than connection state)
+      if (p2pPeers.length === 0) {
+        alert('No P2P peers available. Please wait for peer discovery to complete.');
+        return;
+      }
+      
+      if (!peer.connected) {
+        alert('This peer is not connected. Please wait for the connection to establish.');
         return;
       }
 
@@ -535,17 +552,17 @@ export const VaultTab: React.FC = () => {
         console.log('[VaultTab] Got P2P node health with public key:', health.publicKey);
         publicKey = health.publicKey;
         ownerAddress = health.ownerAddress;
-        nodeUrl = `p2p://${peerId}`;
+        nodePeerId = peerId; // Store raw peerId without p2p:// prefix
       }
       
       // Fail early if we couldn't get public key automatically
       if (!publicKey) {
-        alert('Unable to retrieve node public key. Please ensure the node is running and accessible via P2P or HTTP.');
+        alert('Could not get node public key via P2P. Please ensure the node is running and accessible.');
         return;
       }
       
-      if (!nodeUrl) {
-        nodeUrl = `p2p://${peerId}`;
+      if (!nodePeerId) {
+        nodePeerId = peerId; // Store raw peerId without p2p:// prefix
       }
 
       // Get signer
@@ -564,7 +581,7 @@ export const VaultTab: React.FC = () => {
       let publicKeyBytes = publicKey.startsWith('0x') ? publicKey : '0x' + publicKey;
 
       console.log('[VaultTab] Public key (DER-encoded):', publicKeyBytes);
-      console.log('[VaultTab] Node URL:', nodeUrl);
+      console.log('[VaultTab] Peer ID:', nodePeerId);
       console.log('[VaultTab] Owner will be:', finalOwner, '(msg.sender)');
       
       // Calculate nodeId the same way the contract does: keccak256(full DER public key)
@@ -587,7 +604,7 @@ export const VaultTab: React.FC = () => {
       const confirmMessage = `Register this node?\n\n` +
         `Node ID: ${nodeId.slice(0, 10)}...${nodeId.slice(-8)}\n` +
         `Public Key: ${publicKeyBytes.slice(0, 10)}...${publicKeyBytes.slice(-8)}\n` +
-        `URL: ${nodeUrl}\n` +
+        `Peer ID: ${nodePeerId}\n` +
         `Owner: ${finalOwner}\n` +
         `Stake: 1000 HASHD\n\n` +
         `⚠️ IMPORTANT:\n` +
@@ -628,7 +645,7 @@ export const VaultTab: React.FC = () => {
       
       // Register node with HASHD token stake
       console.log('[VaultTab] Registering node...');
-      const tx = await contract.registerNode(publicKeyBytes, nodeUrl!, metadataHash, stakeAmount);
+      const tx = await contract.registerNode(publicKeyBytes, nodePeerId!, metadataHash, stakeAmount);
       await tx.wait();
 
       alert('Node registered successfully!');
@@ -655,6 +672,25 @@ export const VaultTab: React.FC = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${minutes}m`;
+  };
+
+  const getVersionStatus = (version?: string, minVersion?: string): 'current' | 'outdated' | 'unknown' => {
+    if (!version || !minVersion) return 'unknown';
+    
+    const vParts = version.split('.').map(Number);
+    const minParts = minVersion.split('.').map(Number);
+    
+    const [vMajor = 0, vMinor = 0, vPatch = 0] = vParts;
+    const [minMajor = 0, minMinor = 0, minPatch = 0] = minParts;
+    
+    // Any version mismatch - OUTDATED
+    if (vMajor < minMajor || 
+        (vMajor === minMajor && vMinor < minMinor) ||
+        (vMajor === minMajor && vMinor === minMinor && vPatch < minPatch)) {
+      return 'outdated';
+    }
+    
+    return 'current';
   };
 
   if (loading) {
@@ -744,6 +780,65 @@ export const VaultTab: React.FC = () => {
         </div>
       </div>
 
+      {/* Vault Node Registry Config*/}
+      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <h3 className="text-lg font-semibold text-white mb-4">Vault Node Registry Config</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Replication Factor */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Replication Factor
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Number of copies to maintain across the network
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={replicationFactor}
+                onChange={(e) => setReplicationFactorInput(e.target.value)}
+                className="w-24 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetReplicationFactor}
+                disabled={settingReplicationFactor || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingReplicationFactor ? 'Setting...' : 'Set Factor'}
+              </button>
+            </div>
+          </div>
+
+          {/* Minimum Version */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Minimum Version
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Required node version (e.g., 1.0.0)
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={minVersion}
+                onChange={(e) => setMinVersionInput(e.target.value)}
+                placeholder="1.0.0"
+                className="w-32 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetMinVersion}
+                disabled={settingMinVersion || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingMinVersion ? 'Setting...' : 'Set Version'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Test Storage */}
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4">Test Storage</h3>
@@ -781,6 +876,9 @@ export const VaultTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* CID Viewer */}
+      <CidViewer />
 
       {/* P2P Network - Enhanced with peer details */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -824,6 +922,7 @@ export const VaultTab: React.FC = () => {
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Peer ID</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Version</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Blobs</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Integrity</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Storage</th>
@@ -842,6 +941,12 @@ export const VaultTab: React.FC = () => {
                 });
                 const isRegistered = nodeData?.isRegistered || false;
                 const health = nodeData?.health;
+                const versionStatus = getVersionStatus(health?.version, health?.minVersion);
+                
+                // Debug logging
+                if (health?.version && health?.minVersion) {
+                  console.log(`[VaultTab] Node ${health.nodeId}: version=${health.version}, minVersion=${health.minVersion}, versionStatus=${versionStatus}`);
+                }
                 
                 return (
                   <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
@@ -860,13 +965,26 @@ export const VaultTab: React.FC = () => {
                     </td>
                     <td className="px-4 py-3">
                       {health ? (
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          health.status === 'healthy'
-                            ? 'bg-green-900/50 text-green-400 border border-green-700'
-                            : 'bg-red-900/50 text-red-400 border border-red-700'
-                        }`}>
-                          {health.status}
-                        </span>
+                        (() => {
+                          // Override status with version status if outdated
+                          let displayStatus = health.status;
+                          let statusClass = '';
+                          
+                          if (versionStatus === 'outdated') {
+                            displayStatus = 'outdated';
+                            statusClass = 'bg-yellow-900/50 text-yellow-400 border border-yellow-700';
+                          } else if (health.status === 'healthy') {
+                            statusClass = 'bg-green-900/50 text-green-400 border border-green-700';
+                          } else {
+                            statusClass = 'bg-red-900/50 text-red-400 border border-red-700';
+                          }
+                          
+                          return (
+                            <span className={`px-2 py-1 text-xs rounded-full ${statusClass}`}>
+                              {displayStatus}
+                            </span>
+                          );
+                        })()
                       ) : (
                         <span className={`px-2 py-1 text-xs rounded-full ${
                           peer.connected 
@@ -876,6 +994,9 @@ export const VaultTab: React.FC = () => {
                           {peer.connected ? 'connected' : 'discovered'}
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health?.version || '-'}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-300">
                       {health ? health.storedBlobs : '-'}
@@ -913,11 +1034,17 @@ export const VaultTab: React.FC = () => {
                     </td>
                     <td className="px-4 py-3">
                       {isRegistered ? (
-                        <span className="px-2 py-1 text-xs bg-cyan-900/50 text-cyan-400 border border-cyan-700 rounded">
-                          Registered
-                        </span>
+                        versionStatus === 'outdated' ? (
+                          <span className="text-sm font-medium text-yellow-400">
+                            Outdated
+                          </span>
+                        ) : (
+                          <span className="text-sm font-medium text-green-400">
+                            Registered
+                          </span>
+                        )
                       ) : (
-                        <span className="px-2 py-1 text-xs bg-gray-700/50 text-gray-400 border border-gray-600 rounded">
+                        <span className="text-sm font-medium text-gray-500">
                           Unregistered
                         </span>
                       )}

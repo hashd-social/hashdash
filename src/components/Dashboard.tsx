@@ -128,7 +128,7 @@ export const Dashboard: React.FC = () => {
       case 'contracts':
         return <ContractsTab />;
       case 'vault':
-        return <VaultTab />;
+        return <VaultTab userAddress={userAddress} />;
       default:
         return null;
     }
