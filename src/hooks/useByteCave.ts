@@ -16,12 +16,6 @@ const RPC_URL = process.env.REACT_APP_RPC_URL || 'http://localhost:8545';
 // IMPORTANT: This is initialized in the useEffect with relay peers, not here
 let globalClient: ByteCaveClient | null = null;
 
-interface NodeInfo {
-  publicKey: string;
-  ownerAddress?: string;
-  peerId: string;
-}
-
 interface NodeHealth {
   status: string;
   blobCount: number;
@@ -29,6 +23,7 @@ interface NodeHealth {
   uptime: number;
   nodeId?: string;
   publicKey?: string;
+  secp256k1PublicKey?: string;
   ownerAddress?: string;
   metrics?: {
     requestsLastHour: number;
@@ -54,7 +49,6 @@ interface UseByteCaveReturn {
   disconnect: () => Promise<void>;
   store: (data: Uint8Array, contentType?: string, signer?: any) => Promise<StoreResult>;
   retrieve: (cid: string) => Promise<RetrieveResult>;
-  getNodeInfo: (peerId: string) => Promise<NodeInfo | null>;
   getNodeHealth: (peerId: string) => Promise<NodeHealth | null>;
   error: string | null;
 }
@@ -205,13 +199,6 @@ export function useByteCave(): UseByteCaveReturn {
     return globalClient.retrieve(cid);
   };
 
-  const getNodeInfo = async (peerId: string): Promise<NodeInfo | null> => {
-    if (!globalClient) {
-      return null;
-    }
-    return (globalClient as any).getNodeInfo(peerId);
-  };
-
   const getNodeHealth = async (peerId: string): Promise<NodeHealth | null> => {
     if (!globalClient) {
       return null;
@@ -228,7 +215,6 @@ export function useByteCave(): UseByteCaveReturn {
     disconnect,
     store,
     retrieve,
-    getNodeInfo,
     getNodeHealth,
     error
   };

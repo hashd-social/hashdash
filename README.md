@@ -69,6 +69,11 @@ REACT_APP_RELAY_PEERS=/ip4/127.0.0.1/tcp/4002/ws/p2p/12D3KooW...
 
 ### Peer Configuration Storage
 
+**Why localStorage?** Discovered peers are saved to browser localStorage for faster reconnection on subsequent visits. This means:
+- **Faster startup**: No need to rediscover peers every time
+- **Better UX**: Connects to known-good peers immediately
+- **Persistent sessions**: Peer list survives page refreshes
+
 Peers are stored in browser localStorage as `bytecave_peers`:
 
 ```json

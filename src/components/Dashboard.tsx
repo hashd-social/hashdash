@@ -75,7 +75,7 @@ export const Dashboard: React.FC = () => {
   const authenticate = async () => {
     setIsAuthenticating(true);
     try {
-      const authMessage = `Hashd Admin Authentication\nWallet: ${userAddress}\nTimestamp: ${Date.now()}`;
+      const authMessage = `HASHdash Authentication\nWallet: ${userAddress}\nTimestamp: ${Date.now()}`;
       setMessage(authMessage);
 
       if (!window.ethereum) {

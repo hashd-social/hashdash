@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
-import { useByteCave } from '../../hooks/useByteCave';
+import { useByteCaveContext } from '../../contexts/ByteCaveContext';
 import { useHashdUrl } from '../../hooks/useHashdUrl';
 import { CidViewer } from './CidViewer';
 import { 
@@ -81,6 +81,7 @@ interface ReplicationStats {
 
 const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY;
 const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
+const APP_REGISTRY_ADDRESS = process.env.REACT_APP_APP_REGISTRY;
 
 // ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
@@ -97,7 +98,13 @@ const VAULT_REGISTRY_ABI = [
   'function setReplicationFactor(uint256 _factor) external',
   'function replicationFactor() external view returns (uint256)',
   'function setMinVersion(string _version) external',
-  'function minVersion() external view returns (string)'
+  'function minVersion() external view returns (string)',
+  'function setMinimumStake(uint256 _newMinimum) external',
+  'function setMaximumStake(uint256 _newMaximum) external',
+  'function setWithdrawalTimelock(uint256 _newTimelock) external',
+  'function minimumStake() external view returns (uint256)',
+  'function maximumStake() external view returns (uint256)',
+  'function withdrawalTimelock() external view returns (uint256)'
 ];
 
 // ERC20 ABI for HASHD token
@@ -107,8 +114,27 @@ const ERC20_ABI = [
   'function balanceOf(address account) external view returns (uint256)'
 ];
 
+// ABI for AppRegistry
+const APP_REGISTRY_ABI = [
+  'function registerApp(string memory appName) external',
+  'function getApp(bytes32 appId) external view returns (string memory appName, address owner, bool active, uint256 registeredAt, uint256 burnedAmount)',
+  'function computeAppId(string memory appName) external pure returns (bytes32)',
+  'function setBurnAmount(uint256 newBurnAmount) external',
+  'function getBurnAmount() external view returns (uint256)',
+  'function getAppCount() external view returns (uint256)',
+  'function getTotalBurned() external view returns (uint256)',
+  'function openRegistrationForAll() external',
+  'function openForAll() external view returns (bool)',
+  'function deactivateApp(bytes32 appId) external',
+  'function reactivateApp(bytes32 appId) external',
+  'function grantAuthorization(bytes32 appId, address authorizedAddress) external',
+  'function revokeAuthorization(bytes32 appId, address authorizedAddress) external',
+  'function isAuthorized(bytes32 appId, address sender) external view returns (bool)',
+  'function getAllAppIds() external view returns (bytes32[])'
+];
+
 export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
-  // P2P WebRTC client
+  // P2P WebRTC client from app-level context
   const { 
     connectionState: p2pState, 
     peers: p2pPeers, 
@@ -116,10 +142,9 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     connect: connectP2P,
     disconnect: disconnectP2P,
     store: p2pStore,
-    getNodeInfo,
     getNodeHealth,
     error: p2pError 
-  } = useByteCave();
+  } = useByteCaveContext();
 
   // Network stats
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
@@ -148,14 +173,44 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
   const [replicationFactor, setReplicationFactorInput] = useState('3');
   const [minVersion, setMinVersionInput] = useState('1.0.0');
   const [canRegisterNode, setCanRegisterNodeState] = useState(false);
+  const [minimumStake, setMinimumStakeInput] = useState('100');
+  const [maximumStake, setMaximumStakeInput] = useState('100000');
+  const [withdrawalTimelock, setWithdrawalTimelockInput] = useState('0');
   const [settingReplicationFactor, setSettingReplicationFactor] = useState(false);
   const [settingMinVersion, setSettingMinVersion] = useState(false);
   const [togglingRegistration, setTogglingRegistration] = useState(false);
+  const [settingMinStake, setSettingMinStake] = useState(false);
+  const [settingMaxStake, setSettingMaxStake] = useState(false);
+  const [settingTimelock, setSettingTimelock] = useState(false);
+
+  // App Registry Config state
+  const [newAppName, setNewAppName] = useState('');
+  const [burnAmount, setBurnAmountInput] = useState('1000');
+  const [registeredApps, setRegisteredApps] = useState<Array<{appId: string, appName: string, owner: string, active: boolean, burnedAmount: string}>>([]);
+  const [appCount, setAppCount] = useState(0);
+  const [totalBurned, setTotalBurned] = useState('0');
+  const [openForAll, setOpenForAll] = useState(false);
+  const [registeringApp, setRegisteringApp] = useState(false);
+  const [settingBurnAmount, setSettingBurnAmount] = useState(false);
+  const [openingRegistration, setOpeningRegistration] = useState(false);
+
+  // Node Registry state
+  const [nodePeerId, setNodePeerId] = useState('');
+  const [nodePublicKey, setNodePublicKey] = useState('');
+  const [nodeStakeAmount, setNodeStakeAmount] = useState('1000');
+  const [registeringNode, setRegisteringNode] = useState(false);
+  const [findingNode, setFindingNode] = useState(false);
+  const [deregisteringNode, setDeregisteringNode] = useState(false);
+  const [nodeToDeregister, setNodeToDeregister] = useState('');
 
   useEffect(() => {
     console.log('[VaultTab] p2pPeers changed, count:', p2pPeers.length, 'peers:', p2pPeers.map(p => p.peerId.slice(0, 8)));
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    fetchAppRegistryData();
+    const interval = setInterval(() => {
+      fetchData();
+      fetchAppRegistryData();
+    }, 10000);
     return () => clearInterval(interval);
   }, [p2pPeers]);
 
@@ -370,45 +425,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     }
   }
 
-  async function handleRemoveNode(nodeId: string) {
-    if (!window.confirm('Are you sure you want to deregister this node? Your stake will be returned.')) return;
-
-    try {
-      if (!VAULT_REGISTRY_ADDRESS) return;
-
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
-
-      const tx = await contract.deregisterNode(nodeId);
-      await tx.wait();
-      
-      alert('Node deregistered successfully! Your stake has been returned.');
-      fetchData();
-    } catch (error: any) {
-      console.error('Error deregistering node:', error);
-      alert(`Error: ${error.message}`);
-    }
-  }
-
-  async function handleReactivateNode(nodeId: string) {
-    try {
-      if (!VAULT_REGISTRY_ADDRESS) return;
-
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
-
-      const tx = await contract.reactivateNode(nodeId);
-      await tx.wait();
-      
-      alert('Node reactivated successfully!');
-      fetchData();
-    } catch (error: any) {
-      console.error('Error reactivating node:', error);
-      alert(`Error: ${error.message}`);
-    }
-  }
 
   async function handleSetReplicationFactor() {
     if (!userAddress) {
@@ -513,6 +529,413 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     }
   }
 
+  async function handleSetMinimumStake() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setSettingMinStake(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+      const stakeInWei = ethers.parseEther(minimumStake);
+      const tx = await contract.setMinimumStake(stakeInWei);
+      await tx.wait();
+
+      alert(`✅ Minimum stake set to ${minimumStake} HASHD`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set minimum stake:', error);
+      alert(`❌ Failed to set minimum stake: ${error.message}`);
+    } finally {
+      setSettingMinStake(false);
+    }
+  }
+
+  async function handleSetMaximumStake() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setSettingMaxStake(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+      const stakeInWei = ethers.parseEther(maximumStake);
+      const tx = await contract.setMaximumStake(stakeInWei);
+      await tx.wait();
+
+      alert(`✅ Maximum stake set to ${maximumStake} HASHD`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set maximum stake:', error);
+      alert(`❌ Failed to set maximum stake: ${error.message}`);
+    } finally {
+      setSettingMaxStake(false);
+    }
+  }
+
+  async function handleSetWithdrawalTimelock() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setSettingTimelock(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+      const timelockInSeconds = parseInt(withdrawalTimelock) * 24 * 60 * 60; // Convert days to seconds
+      const tx = await contract.setWithdrawalTimelock(timelockInSeconds);
+      await tx.wait();
+
+      alert(`✅ Withdrawal timelock set to ${withdrawalTimelock} days`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set withdrawal timelock:', error);
+      alert(`❌ Failed to set withdrawal timelock: ${error.message}`);
+    } finally {
+      setSettingTimelock(false);
+    }
+  }
+
+  async function handleRegisterApp() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!newAppName.trim()) {
+      alert('Please enter an app name');
+      return;
+    }
+
+    try {
+      setRegisteringApp(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!APP_REGISTRY_ADDRESS) {
+        throw new Error('App registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(APP_REGISTRY_ADDRESS, APP_REGISTRY_ABI, signer);
+      
+      // Get burn amount
+      const burnAmountWei = await contract.getBurnAmount();
+      
+      // Approve tokens first
+      if (HASHD_TOKEN_ADDRESS) {
+        const tokenContract = new ethers.Contract(HASHD_TOKEN_ADDRESS, ERC20_ABI, signer);
+        const approveTx = await tokenContract.approve(APP_REGISTRY_ADDRESS, burnAmountWei);
+        await approveTx.wait();
+      }
+      
+      // Register app
+      const tx = await contract.registerApp(newAppName);
+      await tx.wait();
+
+      alert(`✅ App "${newAppName}" registered successfully!`);
+      setNewAppName('');
+      setTimeout(() => fetchAppRegistryData(), 500);
+    } catch (error: any) {
+      console.error('Failed to register app:', error);
+      alert(`❌ Failed to register app: ${error.message}`);
+    } finally {
+      setRegisteringApp(false);
+    }
+  }
+
+  async function handleSetBurnAmount() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setSettingBurnAmount(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!APP_REGISTRY_ADDRESS) {
+        throw new Error('App registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(APP_REGISTRY_ADDRESS, APP_REGISTRY_ABI, signer);
+      const burnAmountWei = ethers.parseEther(burnAmount);
+      const tx = await contract.setBurnAmount(burnAmountWei);
+      await tx.wait();
+
+      alert(`✅ Burn amount set to ${burnAmount} HASHD`);
+      setTimeout(() => fetchAppRegistryData(), 500);
+    } catch (error: any) {
+      console.error('Failed to set burn amount:', error);
+      alert(`❌ Failed to set burn amount: ${error.message}`);
+    } finally {
+      setSettingBurnAmount(false);
+    }
+  }
+
+  async function handleFindNode() {
+    if (!nodePeerId.trim()) {
+      alert('Please enter a peer ID first');
+      return;
+    }
+
+    try {
+      setFindingNode(true);
+      
+      // Check if P2P is connected
+      if (!p2pConnected) {
+        alert('⚠️ P2P not connected.\nPlease wait for P2P connection or enter the public key manually.');
+        return;
+      }
+      
+      // Check if node is in peer list
+      const peerExists = p2pPeers.some(p => p.peerId === nodePeerId);
+      if (!peerExists) {
+        alert(`⚠️ Node not found in P2P network.\nPeer ID: ${nodePeerId.slice(0, 20)}...\n\nThe node may be offline or not connected to this P2P network.\nPlease enter the public key manually.`);
+        return;
+      }
+      
+      // Try to get node health via P2P
+      console.log('[VaultTab] Attempting to get health for peer:', nodePeerId);
+      const health = await getNodeHealth(nodePeerId);
+      
+      if (!health) {
+        alert('⚠️ Could not get node health.\nNode may not be responding.\nPlease enter the public key manually.');
+        return;
+      }
+      
+      console.log('[VaultTab] Got health response:', health);
+      
+      if (health.secp256k1PublicKey) {
+        setNodePublicKey(health.secp256k1PublicKey);
+        alert(`✅ Found node!\nPublic key auto-filled from node's health endpoint.`);
+      } else if (health.publicKey) {
+        alert('⚠️ Node found but only Ed25519 key available.\nPlease restart the node to get secp256k1 key, or enter it manually.');
+      } else {
+        alert('⚠️ Node found but no public key available.\nPlease enter the public key manually.');
+      }
+    } catch (error: any) {
+      console.error('Failed to find node:', error);
+      alert(`❌ Failed to find node: ${error.message}\nPlease enter the public key manually.`);
+    } finally {
+      setFindingNode(false);
+    }
+  }
+
+  async function handleDeregisterNode() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!nodeToDeregister.trim()) {
+      alert('Please enter a node ID to deregister');
+      return;
+    }
+
+    try {
+      setDeregisteringNode(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+      
+      // Check if node exists and is active
+      try {
+        const nodeInfo = await contract.getNode(nodeToDeregister);
+        if (!nodeInfo.active) {
+          alert('This node is already deregistered');
+          return;
+        }
+      } catch (error) {
+        alert('Node not found in registry');
+        return;
+      }
+      
+      // Deregister node
+      const tx = await contract.deregisterNode(nodeToDeregister);
+      await tx.wait();
+
+      alert(`✅ Node deregistered successfully!\nNode ID: ${nodeToDeregister.slice(0, 10)}...\nStaked tokens returned to wallet`);
+      setNodeToDeregister('');
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to deregister node:', error);
+      alert(`❌ Failed to deregister node: ${error.message}`);
+    } finally {
+      setDeregisteringNode(false);
+    }
+  }
+
+  async function handleRegisterNode() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!nodePeerId.trim()) {
+      alert('Please enter a peer ID');
+      return;
+    }
+
+    try {
+      setRegisteringNode(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+      const stakeAmountWei = ethers.parseEther(nodeStakeAmount);
+      
+      // Validate public key
+      if (!nodePublicKey.trim()) {
+        throw new Error('Public key is required');
+      }
+      
+      // Ensure public key has 0x prefix
+      const publicKey = nodePublicKey.startsWith('0x') ? nodePublicKey : `0x${nodePublicKey}`;
+      
+      // Create metadata hash
+      const metadata = {
+        version: '1.0.0',
+        capabilities: ['storage', 'replication'],
+        timestamp: Date.now()
+      };
+      const metadataHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(metadata)));
+      
+      // Use empty signature (signature verification not enforced yet)
+      const emptySignature = '0x';
+      
+      // Approve HASHD tokens first
+      if (HASHD_TOKEN_ADDRESS) {
+        const tokenContract = new ethers.Contract(HASHD_TOKEN_ADDRESS, ERC20_ABI, signer);
+        const approveTx = await tokenContract.approve(VAULT_REGISTRY_ADDRESS, stakeAmountWei);
+        await approveTx.wait();
+      }
+      
+      // Register node
+      const tx = await contract.registerNode(
+        publicKey,
+        nodePeerId,
+        metadataHash,
+        stakeAmountWei,
+        emptySignature
+      );
+      await tx.wait();
+
+      alert(`✅ Node registered successfully!\nPeer ID: ${nodePeerId}\nStake: ${nodeStakeAmount} HASHD`);
+      setNodePeerId('');
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to register node:', error);
+      alert(`❌ Failed to register node: ${error.message}`);
+    } finally {
+      setRegisteringNode(false);
+    }
+  }
+
+  async function handleOpenRegistrationForAll() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setOpeningRegistration(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!APP_REGISTRY_ADDRESS) {
+        throw new Error('App registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(APP_REGISTRY_ADDRESS, APP_REGISTRY_ABI, signer);
+      const tx = await contract.openRegistrationForAll();
+      await tx.wait();
+
+      alert('✅ App registration opened for all users!');
+      setOpenForAll(true);
+      setTimeout(() => fetchAppRegistryData(), 500);
+    } catch (error: any) {
+      console.error('Failed to open registration:', error);
+      alert(`❌ Failed to open registration: ${error.message}`);
+    } finally {
+      setOpeningRegistration(false);
+    }
+  }
+
+  async function fetchAppRegistryData() {
+    if (!APP_REGISTRY_ADDRESS) {
+      return;
+    }
+
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const contract = new ethers.Contract(APP_REGISTRY_ADDRESS, APP_REGISTRY_ABI, provider);
+      
+      // Get app count and stats
+      const count = await contract.getAppCount();
+      const burned = await contract.getTotalBurned();
+      const isOpen = await contract.openForAll();
+      const currentBurnAmount = await contract.getBurnAmount();
+      
+      setAppCount(Number(count));
+      setTotalBurned(ethers.formatEther(burned));
+      setOpenForAll(isOpen);
+      setBurnAmountInput(ethers.formatEther(currentBurnAmount));
+      
+      // Fetch all registered apps
+      const appIds = await contract.getAllAppIds();
+      const apps = await Promise.all(
+        appIds.map(async (appId: string) => {
+          const [appName, owner, active, registeredAt, burnedAmount] = await contract.getApp(appId);
+          return {
+            appId,
+            appName,
+            owner,
+            active,
+            burnedAmount: ethers.formatEther(burnedAmount)
+          };
+        })
+      );
+      
+      setRegisteredApps(apps);
+      
+    } catch (error) {
+      // Silently fail - App Registry is optional
+    }
+  }
+
   async function handleTestStorage() {
     if (!testText.trim()) {
       alert('Please enter some text to store');
@@ -560,146 +983,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       alert(`❌ Storage failed: ${error.message}`);
     } finally {
       setStoring(false);
-    }
-  }
-
-  function cancelEdit() {
-    setEditingNode(null);
-    setFormData({ ownerAddress: '', publicKey: '', url: '', metadata: '' });
-  }
-
-  async function handleRegisterPeer(peerId: string) {
-    const peer = p2pPeers.find(p => p.peerId === peerId);
-    if (!peer) {
-      alert('Peer not found');
-      return;
-    }
-
-    try {
-      let publicKey: string | undefined;
-      let ownerAddress: string | undefined;
-      let nodePeerId: string | undefined;
-
-      // Get public key via P2P ONLY - no HTTP fallback
-      // Check if we have any peers (more reliable than connection state)
-      if (p2pPeers.length === 0) {
-        alert('No P2P peers available. Please wait for peer discovery to complete.');
-        return;
-      }
-      
-      if (!peer.connected) {
-        alert('This peer is not connected. Please wait for the connection to establish.');
-        return;
-      }
-
-      console.log('[VaultTab] Getting node info via P2P:', peerId);
-      const health = await getNodeHealth(peerId);
-      
-      if (health && health.publicKey) {
-        console.log('[VaultTab] Got P2P node health with public key:', health.publicKey);
-        publicKey = health.publicKey;
-        ownerAddress = health.ownerAddress;
-        nodePeerId = peerId; // Store raw peerId without p2p:// prefix
-      }
-      
-      // Fail early if we couldn't get public key automatically
-      if (!publicKey) {
-        alert('Could not get node public key via P2P. Please ensure the node is running and accessible.');
-        return;
-      }
-      
-      if (!nodePeerId) {
-        nodePeerId = peerId; // Store raw peerId without p2p:// prefix
-      }
-
-      // Get signer
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      const signerAddress = await signer.getAddress();
-      
-      // Use node's owner address or fall back to connected wallet
-      const finalOwner = ownerAddress || signerAddress;
-
-      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS!, VAULT_REGISTRY_ABI, signer);
-      const metadataHash = ethers.id('bytecave-node');
-
-      // Use the FULL DER-encoded public key (contract hashes the entire key)
-      // DO NOT extract raw bytes - the contract expects the complete DER format
-      let publicKeyBytes = publicKey.startsWith('0x') ? publicKey : '0x' + publicKey;
-
-      console.log('[VaultTab] Public key (DER-encoded):', publicKeyBytes);
-      console.log('[VaultTab] Peer ID:', nodePeerId);
-      console.log('[VaultTab] Owner will be:', finalOwner, '(msg.sender)');
-      
-      // Calculate nodeId the same way the contract does: keccak256(full DER public key)
-      const nodeId = ethers.keccak256(publicKeyBytes);
-      console.log('[VaultTab] Node ID (keccak256 of public key):', nodeId);
-      console.log('[VaultTab] NOTE: NodeId is based on public key hash, NOT libp2p peerId');
-      
-      try {
-        const existingNode = await contract.getNode(nodeId);
-        if (existingNode.active) {
-          alert('This node is already registered and active!');
-          return;
-        }
-        console.log('[VaultTab] Node exists but inactive, will re-register');
-      } catch (err) {
-        console.log('[VaultTab] Node not found, proceeding with registration');
-      }
-      
-      // Show confirmation with all details
-      const confirmMessage = `Register this node?\n\n` +
-        `Node ID: ${nodeId.slice(0, 10)}...${nodeId.slice(-8)}\n` +
-        `Public Key: ${publicKeyBytes.slice(0, 10)}...${publicKeyBytes.slice(-8)}\n` +
-        `Peer ID: ${nodePeerId}\n` +
-        `Owner: ${finalOwner}\n` +
-        `Stake: 1000 HASHD\n\n` +
-        `⚠️ IMPORTANT:\n` +
-        `• Node ID is based on PUBLIC KEY hash (not peerId)\n` +
-        `• If you rebuild the node, the peerId changes but Node ID stays the same\n` +
-        `• Make sure this is the correct node before registering`;
-      
-      if (!window.confirm(confirmMessage)) {
-        return;
-      }
-      
-      // Stake amount: 1000 HASHD tokens (18 decimals)
-      const stakeAmount = ethers.parseEther('1000');
-      console.log('[VaultTab] Stake amount:', ethers.formatEther(stakeAmount), 'HASHD');
-      
-      // Get HASHD token contract
-      const hashdToken = new ethers.Contract(HASHD_TOKEN_ADDRESS!, ERC20_ABI, signer);
-      
-      // Check balance
-      const balance = await hashdToken.balanceOf(signerAddress);
-      console.log('[VaultTab] HASHD balance:', ethers.formatEther(balance));
-      if (balance < stakeAmount) {
-        alert(`Insufficient HASHD balance. Need ${ethers.formatEther(stakeAmount)} HASHD, have ${ethers.formatEther(balance)}`);
-        return;
-      }
-      
-      // Check allowance
-      const allowance = await hashdToken.allowance(signerAddress, VAULT_REGISTRY_ADDRESS);
-      console.log('[VaultTab] Current allowance:', ethers.formatEther(allowance));
-      
-      // Approve if needed
-      if (allowance < stakeAmount) {
-        console.log('[VaultTab] Approving HASHD tokens...');
-        const approveTx = await hashdToken.approve(VAULT_REGISTRY_ADDRESS, stakeAmount);
-        await approveTx.wait();
-        console.log('[VaultTab] HASHD tokens approved');
-      }
-      
-      // Register node with HASHD token stake
-      console.log('[VaultTab] Registering node...');
-      const tx = await contract.registerNode(publicKeyBytes, nodePeerId!, metadataHash, stakeAmount);
-      await tx.wait();
-
-      alert('Node registered successfully!');
-      fetchData();
-    } catch (error: any) {
-      console.error('Error registering peer:', error);
-      alert(`Registration failed: ${error.message}`);
     }
   }
 
@@ -761,23 +1044,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           </h2>
           <p className="text-gray-400 mt-1">Decentralized storage network overview</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            {networkStats && networkStats.healthyNodes > 0 ? (
-              <CheckCircle className="text-green-400" size={20} />
-            ) : (
-              <AlertCircle className="text-yellow-400" size={20} />
-            )}
-            <span className="text-sm text-gray-400">{activeNodes} active nodes</span>
-          </div>
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors flex items-center gap-2"
-          >
-            <Plus size={16} />
-            Add Node
-          </button>
-        </div>
       </div>
 
       {/* Network Stats */}
@@ -830,11 +1096,11 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       {/* Vault Node Registry Config*/}
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4">Vault Node Registry Config</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Replication Factor */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              Replication Factor
+              Replication Factor (Enforced min of 3)
             </label>
             <p className="text-xs text-gray-400 mb-3">
               Number of copies to maintain across the network
@@ -910,6 +1176,391 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                 {togglingRegistration ? 'Updating...' : canRegisterNode ? 'Enabled' : 'Disabled'}
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* Stake and Timelock Controls */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-gray-700">
+          {/* Minimum Stake */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Minimum Stake (HASHD)
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Minimum tokens required to register a node
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="0"
+                value={minimumStake}
+                onChange={(e) => setMinimumStakeInput(e.target.value)}
+                className="w-32 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetMinimumStake}
+                disabled={settingMinStake || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingMinStake ? 'Setting...' : 'Set Min'}
+              </button>
+            </div>
+          </div>
+
+          {/* Maximum Stake */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Maximum Stake (HASHD)
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Maximum tokens allowed per node
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="0"
+                value={maximumStake}
+                onChange={(e) => setMaximumStakeInput(e.target.value)}
+                className="w-32 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetMaximumStake}
+                disabled={settingMaxStake || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingMaxStake ? 'Setting...' : 'Set Max'}
+              </button>
+            </div>
+          </div>
+
+          {/* Withdrawal Timelock */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Withdrawal Timelock (Days)
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Days to wait before withdrawing stake (0 = instant)
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="0"
+                value={withdrawalTimelock}
+                onChange={(e) => setWithdrawalTimelockInput(e.target.value)}
+                className="w-24 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetWithdrawalTimelock}
+                disabled={settingTimelock || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingTimelock ? 'Setting...' : 'Set Timelock'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* App Registry Config */}
+      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <h3 className="text-lg font-semibold text-white mb-4">App Registry Config</h3>
+        
+        {/* Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 pb-6 border-b border-gray-700">
+          <div className="bg-gray-900 p-4 rounded-lg">
+            <p className="text-xs text-gray-400 mb-1">Registered Apps</p>
+            <p className="text-2xl font-bold text-white">{appCount}</p>
+          </div>
+          <div className="bg-gray-900 p-4 rounded-lg">
+            <p className="text-xs text-gray-400 mb-1">Total HASHD Burned</p>
+            <p className="text-2xl font-bold text-orange-400">{totalBurned}</p>
+          </div>
+          <div className="bg-gray-900 p-4 rounded-lg">
+            <p className="text-xs text-gray-400 mb-1">Registration Status</p>
+            <p className={`text-lg font-semibold ${openForAll ? 'text-green-400' : 'text-yellow-400'}`}>
+              {openForAll ? 'Open to All' : 'Owner Only'}
+            </p>
+          </div>
+          <div className="bg-gray-900 p-4 rounded-lg">
+            <p className="text-xs text-gray-400 mb-1">Current Burn Amount</p>
+            <p className="text-lg font-bold text-purple-400">{burnAmount} HASHD</p>
+          </div>
+        </div>
+
+        {/* Controls Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Register New App */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Register New App
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Register a new application (burns HASHD)
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={newAppName}
+                onChange={(e) => setNewAppName(e.target.value)}
+                placeholder="my-app"
+                className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleRegisterApp}
+                disabled={registeringApp || !userAddress || !newAppName.trim()}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {registeringApp ? 'Registering...' : 'Register'}
+              </button>
+            </div>
+          </div>
+
+          {/* Set Burn Amount */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Burn Amount (HASHD)
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              HASHD tokens required to register an app
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="0"
+                value={burnAmount}
+                onChange={(e) => setBurnAmountInput(e.target.value)}
+                className="w-32 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <button
+                onClick={handleSetBurnAmount}
+                disabled={settingBurnAmount || !userAddress}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              >
+                {settingBurnAmount ? 'Setting...' : 'Set Amount'}
+              </button>
+            </div>
+          </div>
+
+          {/* Open Registration */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Public Registration
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Allow anyone to register apps (irreversible)
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleOpenRegistrationForAll}
+                disabled={openingRegistration || !userAddress || openForAll}
+                className={`px-4 py-2 rounded-lg transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed ${
+                  openForAll ? 'bg-gray-700 text-gray-400' : 'bg-orange-600 text-white hover:bg-orange-700'
+                }`}
+              >
+                {openingRegistration ? 'Opening...' : openForAll ? 'Already Open' : 'Open for All'}
+              </button>
+              {openForAll && (
+                <span className="text-xs text-green-400">✓ Enabled</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Registered Apps List */}
+        {registeredApps.length > 0 && (
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <h4 className="text-md font-semibold text-white mb-4">Registered Apps ({registeredApps.length})</h4>
+            <div className="space-y-3">
+              {registeredApps.map((app) => (
+                <div key={app.appId} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">App Name</p>
+                      <p className="text-sm font-semibold text-white">{app.appName}</p>
+                      <p className="text-xs text-gray-500 mt-1 font-mono break-all">
+                        {app.appId.slice(0, 10)}...{app.appId.slice(-8)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Owner</p>
+                      <p className="text-sm text-cyan-400 font-mono break-all">
+                        {app.owner.slice(0, 6)}...{app.owner.slice(-4)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Burned Amount</p>
+                      <p className="text-sm text-orange-400 font-semibold">{app.burnedAmount} HASHD</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Status</p>
+                      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${
+                        app.active ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
+                      }`}>
+                        {app.active ? '✓ Active' : '✗ Inactive'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Node Registry */}
+      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <h3 className="text-lg font-semibold text-white mb-4">Node Registry</h3>
+        <p className="text-sm text-gray-400 mb-6">
+          Register a storage node on-chain using your wallet (no private key required)
+        </p>
+        
+        <div className="space-y-6">
+          {/* Peer ID Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Node Peer ID
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              The libp2p peer ID of your storage node
+            </p>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={nodePeerId}
+                onChange={(e) => setNodePeerId(e.target.value)}
+                placeholder="12D3KooW..."
+                className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none font-mono text-sm"
+              />
+              <button
+                onClick={handleFindNode}
+                disabled={findingNode || !nodePeerId.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {findingNode ? 'Finding...' : 'Find Node'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Get peer ID from your node's /health endpoint or click "Find Node" to auto-fetch public key
+            </p>
+          </div>
+
+          {/* Public Key Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Node Public Key (secp256k1)
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              The node's secp256k1 public key for on-chain verification (33 bytes compressed)
+            </p>
+            <input
+              type="text"
+              value={nodePublicKey}
+              onChange={(e) => setNodePublicKey(e.target.value)}
+              placeholder="0x02... or 0x03... (66 hex chars)"
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none font-mono text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Get from /health endpoint → <code className="bg-gray-800 px-1 rounded">publicKey</code> field (must be 33 bytes / 66 hex chars)
+            </p>
+            <p className="text-xs text-yellow-500 mt-1">
+              ⚠️ Must start with 0x02 or 0x03 (compressed secp256k1 format)
+            </p>
+          </div>
+
+          {/* Stake Amount Input */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Stake Amount (HASHD)
+              </label>
+              <p className="text-xs text-gray-400 mb-3">
+                Amount of HASHD tokens to stake (minimum: 1000)
+              </p>
+              <input
+                type="number"
+                min="1000"
+                step="100"
+                value={nodeStakeAmount}
+                onChange={(e) => setNodeStakeAmount(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                Tokens will be staked and locked until deregistration
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Register Button */}
+        <div className="mt-6 pt-6 border-t border-gray-700">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleRegisterNode}
+              disabled={registeringNode || !userAddress || !nodePeerId.trim() || !nodePublicKey.trim() || parseFloat(nodeStakeAmount) < 1000}
+              className="px-6 py-3 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+            >
+              {registeringNode ? 'Registering...' : 'Register Node'}
+            </button>
+            <div className="text-sm text-gray-400">
+              <p>⚠️ This will:</p>
+              <ul className="list-disc list-inside mt-1 text-xs space-y-1">
+                <li>Approve and stake {nodeStakeAmount} HASHD tokens</li>
+                <li>Register your node on-chain via MetaMask</li>
+                <li>No private key required - uses wallet signature</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* Info Box */}
+        <div className="mt-6 p-4 bg-blue-900/20 border border-blue-700/50 rounded-lg">
+          <h4 className="text-sm font-semibold text-blue-300 mb-2">🔒 Secure Registration</h4>
+          <p className="text-xs text-gray-300 leading-relaxed">
+            This method uses your connected wallet (MetaMask) to sign the registration transaction. 
+            Your private key never leaves your wallet and is never exposed to the application. 
+            This is safer than entering your private key directly into the desktop app.
+          </p>
+        </div>
+
+        {/* Deregister Node Section */}
+        <div className="mt-8 pt-8 border-t border-gray-700">
+          <h4 className="text-md font-semibold text-white mb-4">Deregister Node</h4>
+          <p className="text-sm text-gray-400 mb-4">
+            Remove a node from the registry and recover staked HASHD tokens
+          </p>
+          
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Node ID (keccak256 of public key)
+              </label>
+              <input
+                type="text"
+                value={nodeToDeregister}
+                onChange={(e) => setNodeToDeregister(e.target.value)}
+                placeholder="0x..."
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none font-mono text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                Get this from your node's /health endpoint (onChainNodeId field)
+              </p>
+            </div>
+            <div className="pt-6">
+              <button
+                onClick={handleDeregisterNode}
+                disabled={deregisteringNode || !userAddress || !nodeToDeregister.trim()}
+                className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+              >
+                {deregisteringNode ? 'Deregistering...' : 'Deregister'}
+              </button>
+            </div>
+          </div>
+          
+          <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-700/50 rounded-lg">
+            <p className="text-xs text-yellow-300">
+              ⚠️ This will return your staked HASHD tokens and remove the node from the registry. 
+              All stored blobs will be cleaned up automatically.
+            </p>
           </div>
         </div>
       </div>
@@ -1004,7 +1655,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Uptime</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Success Rate</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Registry</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700">
@@ -1124,34 +1774,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2">
-                        {isRegistered && nodeData ? (
-                          nodeData.active ? (
-                            <button
-                              onClick={() => handleRemoveNode(nodeData.nodeId)}
-                              className="px-2 py-1 text-xs bg-red-900/50 text-red-400 border border-red-700 rounded hover:bg-red-800/50 transition-colors"
-                            >
-                              Deregister
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleReactivateNode(nodeData.nodeId)}
-                              className="px-2 py-1 text-xs bg-green-900/50 text-green-400 border border-green-700 rounded hover:bg-green-800/50 transition-colors"
-                            >
-                              Reactivate
-                            </button>
-                          )
-                        ) : (
-                          <button
-                            onClick={() => handleRegisterPeer(peer.peerId)}
-                            className="px-2 py-1 text-xs bg-cyan-900/50 text-cyan-400 border border-cyan-700 rounded hover:bg-cyan-800/50 transition-colors"
-                          >
-                            Register
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                  
                   </tr>
                 );
               })}
@@ -1163,69 +1786,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           </div>
         )}
       </div>
-
-      {/* Add/Edit Form */}
-      {(showAddForm || editingNode) && (
-        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">
-            {editingNode ? 'Edit Node' : 'Add New Node'}
-          </h3>
-          <form onSubmit={editingNode ? handleUpdateNode : handleAddNode} className="space-y-4">
-            {!editingNode && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Owner Address</label>
-                  <input
-                    type="text"
-                    value={formData.ownerAddress}
-                    onChange={(e) => setFormData({ ...formData, ownerAddress: e.target.value })}
-                    placeholder="0x..."
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Public Key (hex)</label>
-                  <input
-                    type="text"
-                    value={formData.publicKey}
-                    onChange={(e) => setFormData({ ...formData, publicKey: e.target.value })}
-                    placeholder="0x..."
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
-                    required
-                  />
-                </div>
-              </>
-            )}
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Node URL (no trailing slash)</label>
-              <input
-                type="text"
-                value={formData.url}
-                onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                placeholder="http://localhost:3004"
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
-                required
-              />
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors"
-              >
-                {editingNode ? 'Update Node' : 'Add Node'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowAddForm(false); cancelEdit(); }}
-                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
     </div>
   );
