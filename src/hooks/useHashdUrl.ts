@@ -77,7 +77,8 @@ export function useHashdUrl(hashdUrl: string | null | undefined): UseHashdUrlRes
         URL.revokeObjectURL(blobUrl);
       }
     };
-  }, [hashdUrl, client, retrieve]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hashdUrl, client]);
 
   return { blobUrl, loading, error };
 }

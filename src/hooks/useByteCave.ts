@@ -148,6 +148,18 @@ export function useByteCave(): UseByteCaveReturn {
           connect();
         }, 100);
       }
+
+      // Periodically refresh peer list to discover new nodes from relay
+      // Only run when client is connected to avoid clearing peer list
+      const peerRefreshInterval = setInterval(() => {
+        if (connectionState === 'connected') {
+          handlePeerUpdate();
+        }
+      }, 5000); // Check every 5 seconds
+
+      return () => {
+        clearInterval(peerRefreshInterval);
+      };
     };
 
     initializeClient();

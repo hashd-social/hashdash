@@ -84,10 +84,12 @@ const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
 
 // ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
-  'function registerNode(bytes _publicKey, string _peerId, bytes32 _metadataHash, uint256 _stakeAmount) external returns (bytes32)',
+  'function registerNode(bytes _publicKey, string _peerId, bytes32 _metadataHash, uint256 _stakeAmount, bytes _signature) external returns (bytes32)',
   'function deregisterNode(bytes32 _nodeId) external',
   'function updateNode(bytes32 _nodeId, string _url, bytes32 _metadataHash) external',
   'function reactivateNode(bytes32 _nodeId) external',
+  'function setCanRegisterNode(bool _canRegister) external',
+  'function canRegisterNode() external view returns (bool)',
   'function getActiveNodes() external view returns (bytes32[])',
   'function getAllNodes(uint256 _offset, uint256 _limit) external view returns (bytes32[])',
   'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string peerId, bytes32 metadataHash, uint256 registeredAt, bool active))',
@@ -145,8 +147,10 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
   // Vault Node Registry Configstate
   const [replicationFactor, setReplicationFactorInput] = useState('3');
   const [minVersion, setMinVersionInput] = useState('1.0.0');
+  const [canRegisterNode, setCanRegisterNodeState] = useState(false);
   const [settingReplicationFactor, setSettingReplicationFactor] = useState(false);
   const [settingMinVersion, setSettingMinVersion] = useState(false);
+  const [togglingRegistration, setTogglingRegistration] = useState(false);
 
   useEffect(() => {
     console.log('[VaultTab] p2pPeers changed, count:', p2pPeers.length, 'peers:', p2pPeers.map(p => p.peerId.slice(0, 8)));
@@ -216,8 +220,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
       console.log(`[VaultTab] Discovered ${discoveredNodes.length} nodes via P2P`);
       
-      // Registration status now comes from health data - no need for separate contract calls
-      // Just get total node count for network stats
+      // Fetch contract configuration and node count
       if (VAULT_REGISTRY_ADDRESS) {
         try {
           const provider = new ethers.BrowserProvider(window.ethereum);
@@ -225,6 +228,18 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           
           // Get total registered nodes count for network stats
           const [totalRegistered, activeRegistered] = await contract.getNodeCount();
+          
+          // Fetch contract configuration values
+          const [canRegister, replFactor, minVer] = await Promise.all([
+            contract.canRegisterNode(),
+            contract.replicationFactor(),
+            contract.minVersion()
+          ]);
+          
+          // Update state with contract values
+          setCanRegisterNodeState(canRegister);
+          setReplicationFactorInput(replFactor.toString());
+          setMinVersionInput(minVer);
           
           // Update network stats with on-chain data
           setNetworkStats(prev => ({
@@ -463,6 +478,38 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       alert(`❌ Failed to set min version: ${error.message}`);
     } finally {
       setSettingMinVersion(false);
+    }
+  }
+
+  async function handleToggleRegistration() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setTogglingRegistration(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      
+      if (!VAULT_REGISTRY_ADDRESS) {
+        throw new Error('Vault registry address not configured');
+      }
+      
+      const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
+
+      const newValue = !canRegisterNode;
+      const tx = await contract.setCanRegisterNode(newValue);
+      await tx.wait();
+
+      setCanRegisterNodeState(newValue);
+      alert(`✅ Node registration ${newValue ? 'enabled' : 'disabled'}`);
+      setTimeout(() => fetchData(), 500);
+    } catch (error: any) {
+      console.error('Failed to toggle registration:', error);
+      alert(`❌ Failed to toggle registration: ${error.message}`);
+    } finally {
+      setTogglingRegistration(false);
     }
   }
 
@@ -783,7 +830,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       {/* Vault Node Registry Config*/}
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4">Vault Node Registry Config</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Replication Factor */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -836,6 +883,34 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
               </button>
             </div>
           </div>
+
+          {/* Node Registration Toggle */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Node Registration
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              Allow users to register new nodes
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleToggleRegistration}
+                disabled={togglingRegistration || !userAddress}
+                className={`relative inline-flex h-10 w-20 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  canRegisterNode ? 'bg-green-600' : 'bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform ${
+                    canRegisterNode ? 'translate-x-11' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className="text-sm text-gray-300">
+                {togglingRegistration ? 'Updating...' : canRegisterNode ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -865,7 +940,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
               <div className="flex-1">
                 {storageResult.cid && (
                   <span className="text-sm text-green-400">
-                    ✅ CID: <span className="font-mono">{storageResult.cid.slice(0, 24)}...</span>
+                    ✅ CID: <span className="font-mono">{storageResult.cid}</span>
                   </span>
                 )}
                 {storageResult.error && (
