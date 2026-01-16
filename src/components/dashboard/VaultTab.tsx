@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
-import { useByteCaveContext } from '../../contexts/ByteCaveContext';
+import { useByteCaveContext } from '@hashd/bytecave-browser';
 import { useHashdUrl } from '../../hooks/useHashdUrl';
 import { CidViewer } from './CidViewer';
 import { 
@@ -825,6 +825,11 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       // Ensure public key has 0x prefix
       const publicKey = nodePublicKey.startsWith('0x') ? nodePublicKey : `0x${nodePublicKey}`;
       
+      // Validate public key length (should be 64 bytes uncompressed = 128 hex chars + 0x = 130 total)
+      if (publicKey.length !== 130) {
+        throw new Error(`Invalid public key length: expected 130 characters (0x + 128 hex), got ${publicKey.length}. Must be 64-byte uncompressed secp256k1 key.`);
+      }
+      
       // Create metadata hash
       const metadata = {
         version: '1.0.0',
@@ -833,8 +838,35 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       };
       const metadataHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(metadata)));
       
-      // Use empty signature (signature verification not enforced yet)
-      const emptySignature = '0x';
+      // Request signature from the node
+      // The node will sign the owner address with its secp256k1 private key
+      let signature: string;
+      try {
+        // Extract node URL from peer ID or use default
+        // For now, we'll need the user to provide the node URL or we can try to discover it
+        // Assuming node is running locally on default port
+        const nodeUrl = 'http://localhost:5001'; // TODO: Make this configurable or discoverable
+        
+        const signResponse = await fetch(`${nodeUrl}/sign-registration`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ownerAddress: userAddress })
+        });
+        
+        if (!signResponse.ok) {
+          const errorText = await signResponse.text();
+          throw new Error(`Failed to get signature from node: ${errorText}`);
+        }
+        
+        const signData = await signResponse.json();
+        signature = signData.signature;
+        
+        if (!signature || signature.length !== 132) { // 0x + 130 hex chars (65 bytes)
+          throw new Error('Invalid signature received from node');
+        }
+      } catch (error: any) {
+        throw new Error(`Cannot get signature from node: ${error.message}. Make sure your node is running and accessible at http://localhost:5001`);
+      }
       
       // Approve HASHD tokens first
       if (HASHD_TOKEN_ADDRESS) {
@@ -849,7 +881,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         nodePeerId,
         metadataHash,
         stakeAmountWei,
-        emptySignature
+        signature
       );
       await tx.wait();
 
@@ -1092,6 +1124,189 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           </div>
         </div>
       </div>
+
+
+      {/* P2P Network - Enhanced with peer details */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-700">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              {p2pConnected ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-500" />}
+              P2P Network
+            </h3>
+            <div className="flex items-center gap-3">
+              <span className={`text-sm ${
+                p2pState === 'connected' ? 'text-green-400' :
+                p2pState === 'connecting' ? 'text-yellow-400' :
+                p2pState === 'error' ? 'text-red-400' : 'text-gray-500'
+              }`}>
+                {p2pState === 'connected' ? `Connected (${p2pPeers.length} peers)` :
+                 p2pState === 'connecting' ? 'Connecting...' :
+                 p2pState === 'error' ? 'Error' : 'Disconnected'}
+              </span>
+              <button
+                onClick={p2pConnected ? disconnectP2P : connectP2P}
+                className={`px-3 py-1 text-sm rounded transition-colors ${
+                  p2pConnected 
+                    ? 'bg-red-600 hover:bg-red-700 text-white' 
+                    : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                }`}
+              >
+                {p2pConnected ? 'Disconnect' : 'Connect P2P'}
+              </button>
+            </div>
+          </div>
+        </div>
+        {p2pError && (
+          <p className="text-sm text-red-400 px-4 py-2">{p2pError}</p>
+        )}
+        
+        {/* P2P Peers Table */}
+        {p2pPeers.length > 0 ? (
+          <table className="w-full">
+            <thead className="bg-gray-900">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Peer ID</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Version</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Blobs</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Integrity</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Storage</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Uptime</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Success Rate</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Registry</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-700">
+              {p2pPeers.map(peer => {
+                const nodeData = nodes.find(n => {
+                  if (n.health?.peerId) return n.health.peerId === peer.peerId;
+                  if (n.nodeId === peer.peerId) return true;
+                  return false;
+                });
+                const isRegistered = nodeData?.isRegistered || false;
+                const health = nodeData?.health;
+                const versionStatus = getVersionStatus(health?.version, health?.minVersion);
+                
+                // Debug logging
+                if (health?.version && health?.minVersion) {
+                  console.log(`[VaultTab] Node ${health.nodeId}: version=${health.version}, minVersion=${health.minVersion}, versionStatus=${versionStatus}`);
+                }
+                
+                return (
+                  <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                        <div className="flex flex-col">
+                          <span className="text-sm text-white font-medium">
+                            {health?.isRelay ? 'Relay' : health?.nodeId || 'Unknown Node'}
+                          </span>
+                          <span className="text-xs text-gray-400 font-mono">
+                            {peer.peerId.slice(0, 4)}....{peer.peerId.slice(-4)}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {health ? (
+                        (() => {
+                          // Override status with version status if outdated
+                          let displayStatus = health.status;
+                          let statusClass = '';
+                          
+                          if (versionStatus === 'outdated') {
+                            displayStatus = 'outdated';
+                            statusClass = 'bg-yellow-900/50 text-yellow-400 border border-yellow-700';
+                          } else if (health.status === 'healthy') {
+                            statusClass = 'bg-green-900/50 text-green-400 border border-green-700';
+                          } else {
+                            statusClass = 'bg-red-900/50 text-red-400 border border-red-700';
+                          }
+                          
+                          return (
+                            <span className={`px-2 py-1 text-xs rounded-full ${statusClass}`}>
+                              {displayStatus}
+                            </span>
+                          );
+                        })()
+                      ) : (
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          peer.connected 
+                            ? 'bg-green-900/50 text-green-400 border border-green-700'
+                            : 'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
+                        }`}>
+                          {peer.connected ? 'connected' : 'discovered'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health?.version || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? health.storedBlobs : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {health?.integrity ? (
+                        (() => {
+                          const i = health.integrity;
+                          const hasIssues = i.failed > 0 || i.orphaned > 0 || i.metadataTampered > 0;
+                          if (hasIssues) {
+                            return (
+                              <span className="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400 border border-red-700">
+                                ⚠️ Issues
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400 border border-green-700">
+                              ✓ {i.passed}/{i.checked}
+                            </span>
+                          );
+                        })()
+                      ) : (
+                        <span className="text-gray-500">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? formatBytes(health.totalSize) : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? formatUptime(health.uptime) : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {health ? `${(health.successRate * 100).toFixed(1)}%` : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isRegistered ? (
+                        versionStatus === 'outdated' ? (
+                          <span className="text-sm font-medium text-yellow-400">
+                            Outdated
+                          </span>
+                        ) : (
+                          <span className="text-sm font-medium text-green-400">
+                            Registered
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-sm font-medium text-gray-500">
+                          Unregistered
+                        </span>
+                      )}
+                    </td>
+                  
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div className="px-4 py-8 text-center text-gray-400">
+            {p2pConnected ? 'No peers connected yet' : 'Click "Connect P2P" to discover network peers'}
+          </div>
+        )}
+      </div>
+
 
       {/* Vault Node Registry Config*/}
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
@@ -1450,20 +1665,20 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
               Node Public Key (secp256k1)
             </label>
             <p className="text-xs text-gray-400 mb-3">
-              The node's secp256k1 public key for on-chain verification (33 bytes compressed)
+              The node's secp256k1 public key for on-chain verification (64 bytes uncompressed)
             </p>
             <input
               type="text"
               value={nodePublicKey}
               onChange={(e) => setNodePublicKey(e.target.value)}
-              placeholder="0x02... or 0x03... (66 hex chars)"
+              placeholder="0x... (128 hex chars)"
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none font-mono text-sm"
             />
             <p className="text-xs text-gray-500 mt-2">
-              Get from /health endpoint → <code className="bg-gray-800 px-1 rounded">publicKey</code> field (must be 33 bytes / 66 hex chars)
+              Get from /health endpoint → <code className="bg-gray-800 px-1 rounded">secp256k1PublicKey</code> field (must be 64 bytes / 128 hex chars)
             </p>
             <p className="text-xs text-yellow-500 mt-1">
-              ⚠️ Must start with 0x02 or 0x03 (compressed secp256k1 format)
+              ⚠️ Must be 64-byte uncompressed format (without 0x04 prefix)
             </p>
           </div>
 
@@ -1605,187 +1820,6 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
       {/* CID Viewer */}
       <CidViewer />
-
-      {/* P2P Network - Enhanced with peer details */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-700">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-              {p2pConnected ? <Wifi className="w-5 h-5 text-green-400" /> : <WifiOff className="w-5 h-5 text-gray-500" />}
-              P2P Network
-            </h3>
-            <div className="flex items-center gap-3">
-              <span className={`text-sm ${
-                p2pState === 'connected' ? 'text-green-400' :
-                p2pState === 'connecting' ? 'text-yellow-400' :
-                p2pState === 'error' ? 'text-red-400' : 'text-gray-500'
-              }`}>
-                {p2pState === 'connected' ? `Connected (${p2pPeers.length} peers)` :
-                 p2pState === 'connecting' ? 'Connecting...' :
-                 p2pState === 'error' ? 'Error' : 'Disconnected'}
-              </span>
-              <button
-                onClick={p2pConnected ? disconnectP2P : connectP2P}
-                className={`px-3 py-1 text-sm rounded transition-colors ${
-                  p2pConnected 
-                    ? 'bg-red-600 hover:bg-red-700 text-white' 
-                    : 'bg-cyan-600 hover:bg-cyan-700 text-white'
-                }`}
-              >
-                {p2pConnected ? 'Disconnect' : 'Connect P2P'}
-              </button>
-            </div>
-          </div>
-        </div>
-        {p2pError && (
-          <p className="text-sm text-red-400 px-4 py-2">{p2pError}</p>
-        )}
-        
-        {/* P2P Peers Table */}
-        {p2pPeers.length > 0 ? (
-          <table className="w-full">
-            <thead className="bg-gray-900">
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Peer ID</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Version</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Blobs</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Integrity</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Storage</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Uptime</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Success Rate</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Registry</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-700">
-              {p2pPeers.map(peer => {
-                const nodeData = nodes.find(n => {
-                  if (n.health?.peerId) return n.health.peerId === peer.peerId;
-                  if (n.nodeId === peer.peerId) return true;
-                  return false;
-                });
-                const isRegistered = nodeData?.isRegistered || false;
-                const health = nodeData?.health;
-                const versionStatus = getVersionStatus(health?.version, health?.minVersion);
-                
-                // Debug logging
-                if (health?.version && health?.minVersion) {
-                  console.log(`[VaultTab] Node ${health.nodeId}: version=${health.version}, minVersion=${health.minVersion}, versionStatus=${versionStatus}`);
-                }
-                
-                return (
-                  <tr key={peer.peerId} className="hover:bg-gray-700/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${peer.connected ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                        <div className="flex flex-col">
-                          <span className="text-sm text-white font-medium">
-                            {health?.isRelay ? 'Relay' : health?.nodeId || 'Unknown Node'}
-                          </span>
-                          <span className="text-xs text-gray-400 font-mono">
-                            {peer.peerId.slice(0, 4)}....{peer.peerId.slice(-4)}
-                          </span>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {health ? (
-                        (() => {
-                          // Override status with version status if outdated
-                          let displayStatus = health.status;
-                          let statusClass = '';
-                          
-                          if (versionStatus === 'outdated') {
-                            displayStatus = 'outdated';
-                            statusClass = 'bg-yellow-900/50 text-yellow-400 border border-yellow-700';
-                          } else if (health.status === 'healthy') {
-                            statusClass = 'bg-green-900/50 text-green-400 border border-green-700';
-                          } else {
-                            statusClass = 'bg-red-900/50 text-red-400 border border-red-700';
-                          }
-                          
-                          return (
-                            <span className={`px-2 py-1 text-xs rounded-full ${statusClass}`}>
-                              {displayStatus}
-                            </span>
-                          );
-                        })()
-                      ) : (
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          peer.connected 
-                            ? 'bg-green-900/50 text-green-400 border border-green-700'
-                            : 'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
-                        }`}>
-                          {peer.connected ? 'connected' : 'discovered'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {health?.version || '-'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {health ? health.storedBlobs : '-'}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {health?.integrity ? (
-                        (() => {
-                          const i = health.integrity;
-                          const hasIssues = i.failed > 0 || i.orphaned > 0 || i.metadataTampered > 0;
-                          if (hasIssues) {
-                            return (
-                              <span className="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400 border border-red-700">
-                                ⚠️ Issues
-                              </span>
-                            );
-                          }
-                          return (
-                            <span className="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400 border border-green-700">
-                              ✓ {i.passed}/{i.checked}
-                            </span>
-                          );
-                        })()
-                      ) : (
-                        <span className="text-gray-500">-</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {health ? formatBytes(health.totalSize) : '-'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {health ? formatUptime(health.uptime) : '-'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {health ? `${(health.successRate * 100).toFixed(1)}%` : '-'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {isRegistered ? (
-                        versionStatus === 'outdated' ? (
-                          <span className="text-sm font-medium text-yellow-400">
-                            Outdated
-                          </span>
-                        ) : (
-                          <span className="text-sm font-medium text-green-400">
-                            Registered
-                          </span>
-                        )
-                      ) : (
-                        <span className="text-sm font-medium text-gray-500">
-                          Unregistered
-                        </span>
-                      )}
-                    </td>
-                  
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <div className="px-4 py-8 text-center text-gray-400">
-            {p2pConnected ? 'No peers connected yet' : 'Click "Connect P2P" to discover network peers'}
-          </div>
-        )}
-      </div>
 
     </div>
   );

@@ -1,13 +1,22 @@
 import React from 'react';
 import { ToastProvider } from './components/Toast';
-import { ByteCaveProvider } from './contexts/ByteCaveContext';
+import { ByteCaveProvider } from '@hashd/bytecave-browser';
 import { Dashboard } from './components/Dashboard';
 import './index.css';
 
 function App() {
+  const vaultRegistry = process.env.REACT_APP_VAULT_REGISTRY || '';
+  const rpcUrl = process.env.REACT_APP_RPC_URL || 'http://localhost:8545';
+  const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
+  const relayPeers = relayPeersEnv ? relayPeersEnv.split(',').map(p => p.trim()).filter(Boolean) : [];
+
   return (
     <ToastProvider>
-      <ByteCaveProvider>
+      <ByteCaveProvider
+        contractAddress={vaultRegistry}
+        rpcUrl={rpcUrl}
+        relayPeers={relayPeers}
+      >
         <Dashboard />
       </ByteCaveProvider>
     </ToastProvider>
