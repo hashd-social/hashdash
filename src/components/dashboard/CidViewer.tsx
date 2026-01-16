@@ -9,10 +9,14 @@ export const CidViewer: React.FC = () => {
   const { blobUrl, loading, error } = useHashdUrl(hashdUrl);
   const [decryptedText, setDecryptedText] = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
+  const [isEncrypted, setIsEncrypted] = useState<boolean | null>(null);
+  const [contentType, setContentType] = useState<'text' | 'image' | 'unknown'>('unknown');
 
   const handleLoadContent = () => {
     let cid = cidInput.trim();
-    setDecryptedText(null); // Reset decrypted text
+    setDecryptedText(null);
+    setIsEncrypted(null);
+    setContentType('unknown');
     if (cid.startsWith('hashd://')) {
       setHashdUrl(cid);
     } else if (cid) {
@@ -20,35 +24,70 @@ export const CidViewer: React.FC = () => {
     }
   };
 
-  // Decrypt the blob when it's loaded
+  // Try to decrypt the blob when it's loaded, with fallback for unencrypted content
   useEffect(() => {
     if (!blobUrl || loading || error) {
       setDecryptedText(null);
+      setIsEncrypted(null);
+      setContentType('unknown');
       return;
     }
 
-    const decryptBlob = async () => {
+    const processBlob = async () => {
       setDecrypting(true);
       try {
         // Fetch the blob data
         const response = await fetch(blobUrl);
         const arrayBuffer = await response.arrayBuffer();
-        const encryptedHex = '0x' + Array.from(new Uint8Array(arrayBuffer))
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('');
+        const bytes = new Uint8Array(arrayBuffer);
         
-        // Decrypt with test key
-        const decrypted = await CryptoUtils.decryptText(encryptedHex);
-        setDecryptedText(decrypted);
+        // Try to decrypt first (for encrypted content)
+        try {
+          const encryptedHex = '0x' + Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+          
+          const decrypted = await CryptoUtils.decryptText(encryptedHex);
+          
+          // If decryption succeeded, it was encrypted text
+          setDecryptedText(decrypted);
+          setIsEncrypted(true);
+          setContentType('text');
+        } catch (decryptErr) {
+          // Decryption failed - content is not encrypted
+          setIsEncrypted(false);
+          
+          // Check if it's an image by looking at magic bytes
+          const isImage = (
+            (bytes[0] === 0xFF && bytes[1] === 0xD8) || // JPEG
+            (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) || // PNG
+            (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) || // GIF
+            (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) // WEBP
+          );
+          
+          if (isImage) {
+            setContentType('image');
+          } else {
+            // Try to decode as UTF-8 text
+            try {
+              const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+              setDecryptedText(text);
+              setContentType('text');
+            } catch {
+              setContentType('unknown');
+            }
+          }
+        }
       } catch (err: any) {
-        console.error('Decryption failed:', err);
-        setDecryptedText(`[Decryption failed: ${err.message}]`);
+        console.error('Content processing failed:', err);
+        setDecryptedText(`[Error: ${err.message}]`);
+        setIsEncrypted(null);
       } finally {
         setDecrypting(false);
       }
     };
 
-    decryptBlob();
+    processBlob();
   }, [blobUrl, loading, error]);
 
   return (
@@ -72,9 +111,6 @@ export const CidViewer: React.FC = () => {
             placeholder="Enter CID or hashd://{cid}"
             className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none font-mono text-sm"
           />
-          <p className="text-xs text-gray-500 mt-1">
-            Example: 78a3ea5e1562e94e80b782405c47f55c04da6bc2ae37614c45513e9c66f24cf6
-          </p>
         </div>
         
         <button
@@ -107,37 +143,82 @@ export const CidViewer: React.FC = () => {
       
       {blobUrl && !loading && !error && (
         <div className="mt-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="text-green-400" size={20} />
-            <p className="text-sm text-green-400 font-medium">Content loaded via hashd:// protocol</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="text-green-400" size={20} />
+              <p className="text-sm text-green-400 font-medium">Content loaded via hashd:// protocol</p>
+            </div>
+            
+            {/* Encryption Status Badge */}
+            {isEncrypted !== null && (
+              <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                isEncrypted 
+                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' 
+                  : 'bg-gray-700/50 text-gray-400 border border-gray-600/30'
+              }`}>
+                {isEncrypted ? '🔒 Encrypted' : '🔓 Unencrypted'}
+              </div>
+            )}
           </div>
           
           {decrypting ? (
             <div className="border border-gray-700 rounded-lg p-4 bg-gray-900 flex items-center justify-center">
               <RefreshCw className="animate-spin text-cyan-400 mr-2" size={20} />
-              <span className="text-gray-400">Decrypting...</span>
+              <span className="text-gray-400">Processing content...</span>
             </div>
-          ) : decryptedText ? (
+          ) : contentType === 'text' && decryptedText ? (
             <div className="border border-gray-700 rounded-lg p-4 bg-gray-900">
+              <div className="flex items-center gap-2 mb-2 text-xs text-gray-500">
+                <span>📄 Text Content</span>
+                {isEncrypted && <span className="text-purple-400">(Decrypted)</span>}
+              </div>
               <pre className="text-white whitespace-pre-wrap break-words font-mono text-sm">
                 {decryptedText}
               </pre>
             </div>
-          ) : (
+          ) : contentType === 'image' ? (
             <div className="border border-gray-700 rounded-lg p-4 bg-gray-900">
+              <div className="flex items-center gap-2 mb-3 text-xs text-gray-500">
+                <span>🖼️ Image Content</span>
+              </div>
               <img 
                 src={blobUrl} 
                 alt="Stored content"
                 className="max-w-full h-auto rounded-lg"
               />
             </div>
-          )}
+          ) : contentType === 'unknown' ? (
+            <div className="border border-gray-700 rounded-lg p-4 bg-gray-900">
+              <div className="text-center py-4">
+                <p className="text-gray-400 text-sm">⚠️ Unknown content type</p>
+                <p className="text-gray-500 text-xs mt-2">Cannot display this content</p>
+                <a 
+                  href={blobUrl}
+                  download
+                  className="inline-block mt-3 px-4 py-2 bg-cyan-600 text-white text-sm rounded-lg hover:bg-cyan-700 transition-colors"
+                >
+                  Download Raw Data
+                </a>
+              </div>
+            </div>
+          ) : null}
           
-          <div className="text-xs text-gray-400">
-            <span className="font-medium">CID:</span>{' '}
-            <code className="bg-gray-900 px-2 py-1 rounded font-mono">
-              {cidInput.replace('hashd://', '')}
-            </code>
+          <div className="text-xs text-gray-400 space-y-1">
+            <div>
+              <span className="font-medium">CID:</span>{' '}
+              <code className="bg-gray-900 px-2 py-1 rounded font-mono">
+                {cidInput.replace('hashd://', '')}
+              </code>
+            </div>
+            {contentType !== 'unknown' && (
+              <div>
+                <span className="font-medium">Type:</span>{' '}
+                <span className="text-gray-500">
+                  {contentType === 'text' ? 'Text' : contentType === 'image' ? 'Image' : 'Unknown'}
+                  {isEncrypted && ' (Encrypted)'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

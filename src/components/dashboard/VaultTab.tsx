@@ -285,16 +285,22 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           const [totalRegistered, activeRegistered] = await contract.getNodeCount();
           
           // Fetch contract configuration values
-          const [canRegister, replFactor, minVer] = await Promise.all([
+          const [canRegister, replFactor, minVer, minStake, maxStake, timelock] = await Promise.all([
             contract.canRegisterNode(),
             contract.replicationFactor(),
-            contract.minVersion()
+            contract.minVersion(),
+            contract.minimumStake(),
+            contract.maximumStake(),
+            contract.withdrawalTimelock()
           ]);
           
           // Update state with contract values
           setCanRegisterNodeState(canRegister);
           setReplicationFactorInput(replFactor.toString());
           setMinVersionInput(minVer);
+          setMinimumStakeInput(Math.floor(parseFloat(ethers.formatEther(minStake))).toString());
+          setMaximumStakeInput(Math.floor(parseFloat(ethers.formatEther(maxStake))).toString());
+          setWithdrawalTimelockInput((timelock / (24 * 60 * 60)).toString()); // Convert seconds to days
           
           // Update network stats with on-chain data
           setNetworkStats(prev => ({
@@ -944,7 +950,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       setAppCount(Number(count));
       setTotalBurned(ethers.formatEther(burned));
       setOpenForAll(isOpen);
-      setBurnAmountInput(ethers.formatEther(currentBurnAmount));
+      setBurnAmountInput(Math.floor(parseFloat(ethers.formatEther(currentBurnAmount))).toString());
       
       // Fetch all registered apps
       const appIds = await contract.getAllAppIds();
@@ -1662,7 +1668,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           {/* Public Key Input */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              Node Public Key (secp256k1)
+              Node Public Key (for on-chain registration)
             </label>
             <p className="text-xs text-gray-400 mb-3">
               The node's secp256k1 public key for on-chain verification (64 bytes uncompressed)
@@ -1747,7 +1753,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Node ID (keccak256 of public key)
+                Node ID (on-chain identifier)
               </label>
               <input
                 type="text"
@@ -1757,7 +1763,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none font-mono text-sm"
               />
               <p className="text-xs text-gray-500 mt-2">
-                Get this from your node's /health endpoint (onChainNodeId field)
+                Get this from your node's /health endpoint (nodeId field)
               </p>
             </div>
             <div className="pt-6">
