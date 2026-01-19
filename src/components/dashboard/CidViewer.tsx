@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Database, RefreshCw, AlertCircle, CheckCircle, Image as ImageIcon } from 'lucide-react';
-import { useHashdUrl } from '../../hooks/useHashdUrl';
+import { useHashdUrl } from '@hashd/bytecave-browser';
 import { CryptoUtils } from '../../utils/crypto';
 
 export const CidViewer: React.FC = () => {
