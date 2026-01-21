@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
 import { useByteCaveContext } from '@hashd/bytecave-browser';
-import { useHashdUrl } from '../../hooks/useHashdUrl';
 import { CidViewer } from './CidViewer';
 import { 
   Database, 
@@ -82,6 +81,14 @@ interface ReplicationStats {
 const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY;
 const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
 const APP_REGISTRY_ADDRESS = process.env.REACT_APP_APP_REGISTRY;
+const CONTENT_REGISTRY_ADDRESS = process.env.REACT_APP_CONTENT_REGISTRY;
+
+// ABI for ContentRegistry
+const CONTENT_REGISTRY_ABI = [
+  'function deleteOwnedContent() external returns (uint256)',
+  'function getOwnerCidCount(address owner) external view returns (uint256)',
+  'function getOwnerCids(address owner) external view returns (bytes32[])'
+];
 
 // ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
@@ -142,6 +149,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     connect: connectP2P,
     disconnect: disconnectP2P,
     store: p2pStore,
+    registerContent,
     getNodeHealth,
     error: p2pError 
   } = useByteCaveContext();
@@ -166,8 +174,12 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
   // Test storage state
   const [testText, setTestText] = useState('');
+  const [testAppId, setTestAppId] = useState('hashd');
+  const [testMimeType, setTestMimeType] = useState('application/octet-stream');
   const [storageResult, setStorageResult] = useState<{ cid?: string; error?: string } | null>(null);
   const [storing, setStoring] = useState(false);
+  const [deletingContent, setDeletingContent] = useState(false);
+  const [deleteResult, setDeleteResult] = useState<{ count?: number; error?: string } | null>(null);
 
   // Vault Node Registry Configstate
   const [replicationFactor, setReplicationFactorInput] = useState('3');
@@ -1004,16 +1016,34 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       const hexString = encryptedHex.startsWith('0x') ? encryptedHex.slice(2) : encryptedHex;
       const ciphertext = new Uint8Array(Buffer.from(hexString, 'hex'));
 
-      // Use P2P store with signer for authorization
-      const result = await p2pStore(ciphertext, 'text/plain', signer);
+      // Calculate CID before registration
+      const hashBuffer = await crypto.subtle.digest('SHA-256', ciphertext);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const cid = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      let registrationResult = null;
+      
+      // Step 1: Register content in ContentRegistry (on-chain)
+      console.log('[Test Storage] Registering content in ContentRegistry:', cid, 'appId:', testAppId);
+      registrationResult = await registerContent(cid, testAppId, signer);
+      
+      if (!registrationResult.success) {
+        throw new Error(`ContentRegistry registration failed: ${registrationResult.error}`);
+      }
+
+      console.log('[Test Storage] Content registered, tx hash:', registrationResult.txHash);
+
+      // Step 2: Store via P2P
+      const result = await p2pStore(ciphertext, testMimeType, signer);
 
       if (!result.success) {
         throw new Error(result.error || 'Storage failed');
       }
 
       setStorageResult({ cid: result.cid });
-      alert(`✅ Successfully stored via P2P!\nCID: ${result.cid}`);
-      setTestText(''); // Clear the text after successful storage
+      const successMsg = `✅ Successfully registered and stored!\n\nContentRegistry TX: ${registrationResult?.txHash?.slice(0, 10)}...\nCID: ${result.cid}\nApp ID: ${testAppId}`;
+      alert(successMsg);
+      setTestText('');
       setTimeout(() => fetchData(), 500);
     } catch (error: any) {
       console.error('Storage error:', error);
@@ -1021,6 +1051,63 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       alert(`❌ Storage failed: ${error.message}`);
     } finally {
       setStoring(false);
+    }
+  }
+
+  async function handleDeleteOwnedContent() {
+    if (!userAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!CONTENT_REGISTRY_ADDRESS) {
+      alert('ContentRegistry address not configured');
+      return;
+    }
+
+    try {
+      setDeletingContent(true);
+      setDeleteResult(null);
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contentRegistry = new ethers.Contract(
+        CONTENT_REGISTRY_ADDRESS,
+        CONTENT_REGISTRY_ABI,
+        signer
+      );
+
+      // Get count first to show user
+      const count = await contentRegistry.getOwnerCidCount(userAddress);
+      
+      if (count === BigInt(0)) {
+        alert('You have no registered content to delete');
+        setDeleteResult({ count: 0 });
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Are you sure you want to delete all ${count.toString()} of your registered CIDs?\n\n` +
+        'This will prevent your content from being replicated by ByteCave nodes.'
+      );
+
+      if (!confirmed) {
+        setDeletingContent(false);
+        return;
+      }
+
+      const tx = await contentRegistry.deleteOwnedContent();
+      const receipt = await tx.wait();
+
+      const deletedCount = Number(count);
+      setDeleteResult({ count: deletedCount });
+      alert(`✅ Successfully deleted ${deletedCount} CID(s) from ContentRegistry!`);
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      setDeleteResult({ error: error.message });
+      alert(`❌ Delete failed: ${error.message}`);
+    } finally {
+      setDeletingContent(false);
     }
   }
 
@@ -1790,9 +1877,51 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4">Test Storage</h3>
         <p className="text-sm text-gray-400 mb-4">
-          Enter text to encrypt and store on an active ByteCave node
+          Configure and test storage with different parameters
         </p>
         <div className="space-y-4">
+          {/* Configuration Grid */}
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                App ID
+              </label>
+              <input
+                type="text"
+                value={testAppId}
+                onChange={(e) => setTestAppId(e.target.value)}
+                placeholder="hashd"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">Test with non-existent app IDs</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                MIME Type
+              </label>
+              <select
+                value={testMimeType}
+                onChange={(e) => setTestMimeType(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none text-sm"
+              >
+                <option value="application/octet-stream">application/octet-stream</option>
+                <option value="text/plain">text/plain</option>
+                <option value="application/json">application/json</option>
+                <option value="image/png">image/png</option>
+                <option value="video/mp4">video/mp4</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Content type for storage</p>
+            </div>
+          </div>
+
+          {/* Note about on-chain registration */}
+          <div className="bg-cyan-900/20 border border-cyan-500/30 rounded-lg p-3 mb-4">
+            <p className="text-xs text-cyan-400">
+              🔗 All content is automatically registered on-chain in ContentRegistry for permanent discovery and verification
+            </p>
+          </div>
+
+          {/* Text Input */}
           <textarea
             value={testText}
             onChange={(e) => setTestText(e.target.value)}
@@ -1808,6 +1937,14 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
             >
               {storing ? 'Storing...' : 'Encrypt & Store'}
             </button>
+            <button
+              onClick={handleDeleteOwnedContent}
+              disabled={deletingContent || !userAddress}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
+              title="Delete all your registered content from ContentRegistry"
+            >
+              {deletingContent ? 'Deleting...' : 'Delete Owned Content'}
+            </button>
             {storageResult && (
               <div className="flex-1">
                 {storageResult.cid && (
@@ -1817,6 +1954,18 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                 )}
                 {storageResult.error && (
                   <span className="text-sm text-red-400">❌ {storageResult.error}</span>
+                )}
+              </div>
+            )}
+            {deleteResult && (
+              <div className="flex-1">
+                {deleteResult.count !== undefined && (
+                  <span className="text-sm text-green-400">
+                    ✅ Deleted {deleteResult.count} CID(s)
+                  </span>
+                )}
+                {deleteResult.error && (
+                  <span className="text-sm text-red-400">❌ {deleteResult.error}</span>
                 )}
               </div>
             )}

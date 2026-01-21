@@ -217,7 +217,7 @@ export const RoyaltiesTab: React.FC<RoyaltiesTabProps> = ({ userAddress }) => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-green-400 font-medium text-lg">Group NFT Royalties</h3>
-            <p className="text-gray-400 text-sm mt-1">Platform share from Group Prime Key sales (ERC-2981)</p>
+            <p className="text-gray-400 text-sm mt-1">Platform share from Group Genesis Key sales (ERC-2981)</p>
           </div>
           <div className="text-right">
             <p className="text-white text-3xl font-bold">2.5%</p>

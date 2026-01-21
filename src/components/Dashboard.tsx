@@ -145,7 +145,7 @@ export const Dashboard: React.FC = () => {
               <img src="/logo.png" alt="Hashd Logo" className="w-10 h-10" />
               <div>
                 <h1 className="text-3xl font-bold text-white">HASHdash</h1>
-                <p className="text-gray-400 text-sm">Admin Dashboard</p>
+                <p className="text-gray-400 text-sm">Network Overview</p>
               </div>
             </div>
             <div className="text-right">

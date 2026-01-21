@@ -291,7 +291,7 @@ export const TreasuryTab: React.FC<TreasuryTabProps> = ({ userAddress }) => {
           
           <RevenueCard
             title="Group NFT Primary Fees"
-            description="Platform share from Group Prime Key mints (2.5%)"
+            description="Platform share from Group Genesis Key mints (2.5%)"
             icon={Package}
             color="from-green-900/30 to-green-800/20 border-green-600/50"
             current={displayData.groupPrimaryCurrent}

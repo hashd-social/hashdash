@@ -12,6 +12,7 @@ export const CONTRACT_ADDRESSES = {
   GROUP_FACTORY_STORAGE: process.env.REACT_APP_GROUP_FACTORY_STORAGE || '',
   VAULT_REGISTRY_STORAGE: process.env.REACT_APP_VAULT_REGISTRY_STORAGE || '',
   APP_REGISTRY_STORAGE: process.env.REACT_APP_APP_REGISTRY_STORAGE || '',
+  CONTENT_REGISTRY_STORAGE: process.env.REACT_APP_CONTENT_REGISTRY_STORAGE || '',
   
   // Platform Treasury (UUPS Upgradeable)
   PLATFORM_TREASURY: process.env.REACT_APP_PLATFORM_TREASURY || '',
@@ -30,6 +31,7 @@ export const CONTRACT_ADDRESSES = {
   VAULT_REGISTRY: process.env.REACT_APP_VAULT_REGISTRY || '',
   VAULT_INCENTIVES: process.env.REACT_APP_VAULT_INCENTIVES || '',
   APP_REGISTRY: process.env.REACT_APP_APP_REGISTRY || '',
+  CONTENT_REGISTRY: process.env.REACT_APP_CONTENT_REGISTRY || '',
 };
 
 // Network configuration
@@ -116,6 +118,7 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'GroupFactoryStorage', address: CONTRACT_ADDRESSES.GROUP_FACTORY_STORAGE, type: 'storage' as const },
     { name: 'VaultNodeRegistryStorage', address: CONTRACT_ADDRESSES.VAULT_REGISTRY_STORAGE, type: 'storage' as const },
     { name: 'AppRegistryStorage', address: CONTRACT_ADDRESSES.APP_REGISTRY_STORAGE, type: 'storage' as const },
+    { name: 'ContentRegistryStorage', address: CONTRACT_ADDRESSES.CONTENT_REGISTRY_STORAGE, type: 'storage' as const },
     // Logic contracts
     { name: 'KeyRegistry', address: CONTRACT_ADDRESSES.KEY_REGISTRY, type: 'logic' as const },
     { name: 'AccountRegistry', address: CONTRACT_ADDRESSES.ACCOUNT_REGISTRY, type: 'logic' as const },
@@ -131,6 +134,7 @@ export function getAllContractInfo(): ContractInfo[] {
     { name: 'VaultNodeRegistry', address: CONTRACT_ADDRESSES.VAULT_REGISTRY, type: 'logic' as const },
     { name: 'VaultIncentives', address: CONTRACT_ADDRESSES.VAULT_INCENTIVES, type: 'logic' as const },
     { name: 'AppRegistry', address: CONTRACT_ADDRESSES.APP_REGISTRY, type: 'logic' as const },
+    { name: 'ContentRegistry', address: CONTRACT_ADDRESSES.CONTENT_REGISTRY, type: 'logic' as const },
   ];
   return contracts.filter(c => c.address);
 }
