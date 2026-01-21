@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { CryptoUtils } from '../../utils/crypto';
-import { useByteCaveContext } from '@hashd/bytecave-browser';
+import { useByteCaveContext } from '@hashd-social/bytecave-browser';
 import { CidViewer } from './CidViewer';
 import { 
   Database, 

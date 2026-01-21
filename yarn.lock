@@ -1415,9 +1415,10 @@
     ethereum-cryptography "^2.0.0"
     micro-ftch "^0.3.1"
 
-"@hashd/bytecave-browser@github:hashd-social/bytecave-browser#main":
+"@hashd-social/bytecave-browser@^1.0.0":
   version "1.0.0"
-  resolved "https://codeload.github.com/hashd-social/bytecave-browser/tar.gz/f0fe582cd544a830576eba3dece8975055d1cebc"
+  resolved "https://registry.yarnpkg.com/@hashd-social/bytecave-browser/-/bytecave-browser-1.0.0.tgz#987b57ebd7f7078a75a5469e49d0bc6c51254ff6"
+  integrity sha512-0R17MR5EXTxI/6KMYCzYeDEsdE3Ri4EalbEOkeCX/W8CsbxIfUOCXxARBuii1Sasp7WN7unb2DkOENkFK7y8QA==
   dependencies:
     "@chainsafe/libp2p-noise" "^17.0.0"
     "@chainsafe/libp2p-yamux" "^8.0.1"
