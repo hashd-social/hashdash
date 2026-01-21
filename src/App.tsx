@@ -1,6 +1,6 @@
 import React from 'react';
 import { ToastProvider } from './components/Toast';
-import { ByteCaveProvider } from '@hashd-social/bytecave-browser';
+import { ByteCaveProvider } from '@gethashd/bytecave-browser';
 import { Dashboard } from './components/Dashboard';
 import './index.css';
 
