@@ -1,8 +1,11 @@
 declare module '@hashd/bytecave-browser' {
   export interface ByteCaveConfig {
-    contractAddress: string;
-    rpcUrl: string;
+    vaultNodeRegistryAddress?: string;
+    contentRegistryAddress?: string;
+    rpcUrl?: string;
+    appId: string;
     relayPeers?: string[]; // Relay node multiaddrs for pure P2P discovery
+    directNodeAddrs?: string[];
     maxPeers?: number;
     connectionTimeout?: number;
   }
@@ -44,7 +47,7 @@ declare module '@hashd/bytecave-browser' {
   }
 
   export class ContractDiscovery {
-    constructor(contractAddress: string, rpcUrl: string);
+    constructor(vaultNodeRegistryAddress: string, rpcUrl: string);
     getActiveNodes(): Promise<any[]>;
     getNodeCount(): Promise<{ total: number; active: number }>;
   }

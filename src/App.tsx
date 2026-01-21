@@ -14,7 +14,7 @@ function App() {
   return (
     <ToastProvider>
       <ByteCaveProvider
-        contractAddress={vaultRegistry}
+        vaultNodeRegistryAddress={vaultRegistry}
         contentRegistryAddress={contentRegistry}
         rpcUrl={rpcUrl}
         appId="hashd"
