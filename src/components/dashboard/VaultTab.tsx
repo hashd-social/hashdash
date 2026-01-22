@@ -242,50 +242,36 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         return;
       }
 
-      // Get health data from all P2P peers
-      const peerHealthPromises = p2pPeers.map(async (peer) => {
-        try {
-          console.log(`[VaultTab] Getting P2P health for peer ${peer.peerId.slice(0, 12)}`);
-          const p2pHealth = await getNodeHealth(peer.peerId);
-          if (p2pHealth) {
-            console.log(`[VaultTab] P2P health for ${peer.peerId.slice(0, 12)}:`, p2pHealth);
-            console.log(`[VaultTab] version=${(p2pHealth as any).version}, minVersion=${(p2pHealth as any).minVersion}`);
-            return {
-              nodeId: p2pHealth.nodeId || peer.peerId.slice(0, 12),
-              owner: '',
-              publicKey: p2pHealth.publicKey || '',
-              url: '',
-              metadataHash: '',
-              registeredAt: 0,
-              active: true,
-              loading: false,
-              isRegistered: (p2pHealth as any).registeredOnChain || false, // Get registration status from health data
-              health: {
-                status: p2pHealth.status,
-                storedBlobs: p2pHealth.blobCount || 0,
-                totalSize: p2pHealth.storageUsed || 0,
-                uptime: p2pHealth.uptime || 0,
-                successRate: p2pHealth.metrics?.successRate || 1,
-                peers: 0,
-                requestsLastHour: p2pHealth.metrics?.requestsLastHour || 0,
-                avgResponseTime: p2pHealth.metrics?.avgResponseTime || 0,
-                peerId: peer.peerId,
-                nodeId: p2pHealth.nodeId,
-                version: (p2pHealth as any).version,
-                minVersion: (p2pHealth as any).minVersion,
-                integrity: p2pHealth.integrity
-              }
-            };
+      // Use peer data directly - floodsub announcements already include all health data
+      const discoveredNodes = p2pPeers.map((peer: any) => {
+        console.log(`[VaultTab] Using peer data for ${peer.peerId.slice(0, 12)}:`, peer);
+        return {
+          nodeId: peer.nodeId || peer.peerId.slice(0, 12),
+          owner: '',
+          publicKey: peer.publicKey || '',
+          url: '',
+          metadataHash: '',
+          registeredAt: 0,
+          active: true,
+          loading: false,
+          isRegistered: peer.registeredOnChain || false,
+          health: {
+            status: peer.status || 'healthy',
+            storedBlobs: peer.blobCount || 0,
+            totalSize: peer.storageUsed || 0,
+            uptime: peer.uptime || 0,
+            successRate: peer.metrics?.successRate || 1,
+            peers: 0,
+            requestsLastHour: peer.metrics?.requestsLastHour || 0,
+            avgResponseTime: peer.metrics?.avgResponseTime || 0,
+            peerId: peer.peerId,
+            nodeId: peer.nodeId,
+            version: peer.version,
+            minVersion: peer.minVersion,
+            integrity: peer.integrity
           }
-          return null;
-        } catch (err) {
-          console.warn(`[VaultTab] P2P health failed for ${peer.peerId.slice(0, 12)}`);
-          return null;
-        }
-      });
-
-      const peerHealthResults = await Promise.all(peerHealthPromises);
-      const discoveredNodes = peerHealthResults.filter(n => n !== null) as NodeWithHealth[];
+        };
+      }) as NodeWithHealth[];
 
       console.log(`[VaultTab] Discovered ${discoveredNodes.length} nodes via P2P`);
       
@@ -1908,9 +1894,9 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                 onChange={(e) => setTestMimeType(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none text-sm"
               >
-                <option value="application/octet-stream">application/octet-stream</option>
                 <option value="text/plain">text/plain</option>
                 <option value="application/json">application/json</option>
+                <option value="application/octet-stream">application/octet-stream</option>                
                 <option value="image/png">image/png</option>
                 <option value="video/mp4">video/mp4</option>
               </select>

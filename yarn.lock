@@ -1415,15 +1415,16 @@
     ethereum-cryptography "^2.0.0"
     micro-ftch "^0.3.1"
 
-"@gethashd/bytecave-browser@1.0.2":
-  version "1.0.2"
-  resolved "https://registry.yarnpkg.com/@gethashd/bytecave-browser/-/bytecave-browser-1.0.2.tgz#a72e788cd4759cefed311f727317de7d716fc355"
-  integrity sha512-ns+fRrGS8SKFTfat4KXP4qqgRFr63ie8E4pZRaQ/gb6/AxWCc4JE94vZxl9x2uGH0/aqCTO+5YIqZLXjqkaXjw==
+"@gethashd/bytecave-browser@1.0.11":
+  version "1.0.11"
+  resolved "https://registry.yarnpkg.com/@gethashd/bytecave-browser/-/bytecave-browser-1.0.11.tgz#d590b8ba93885ebf325632988c5dbefa6e2ade0e"
+  integrity sha512-QFMgpQs4n37Ct/7I4g3geOC9wD0tW3xzKkI5jsuQYniDgKz8hWo9Dlu1uaHmHt79hQAt9Llxv+4TdnNX0LkeGg==
   dependencies:
     "@chainsafe/libp2p-noise" "^17.0.0"
     "@chainsafe/libp2p-yamux" "^8.0.1"
     "@libp2p/bootstrap" "^12.0.10"
     "@libp2p/circuit-relay-v2" "^4.1.2"
+    "@libp2p/dcutr" "^3.0.10"
     "@libp2p/floodsub" "^11.0.10"
     "@libp2p/identify" "^4.0.9"
     "@libp2p/webrtc" "^6.0.10"
@@ -1781,6 +1782,20 @@
     protons-runtime "^5.6.0"
     uint8arraylist "^2.4.8"
     uint8arrays "^5.1.0"
+
+"@libp2p/dcutr@^3.0.10":
+  version "3.0.10"
+  resolved "https://registry.yarnpkg.com/@libp2p/dcutr/-/dcutr-3.0.10.tgz#85ef65ac2d3fdf4d273f8b1ea6feb2707f0344f6"
+  integrity sha512-rMBstMznxLgIGNvHFlEHo9Lvx0/+wD2RXB+H7VU58ov1CRQNwlSix38BaQ6PI94LOmVzDPHKl8x3mG6YKp5GEw==
+  dependencies:
+    "@libp2p/interface" "^3.1.0"
+    "@libp2p/interface-internal" "^3.0.10"
+    "@libp2p/utils" "^7.0.10"
+    "@multiformats/multiaddr" "^13.0.1"
+    "@multiformats/multiaddr-matcher" "^3.0.1"
+    delay "^7.0.0"
+    protons-runtime "^5.6.0"
+    uint8arraylist "^2.4.8"
 
 "@libp2p/floodsub@^11.0.10":
   version "11.0.11"
@@ -5362,9 +5377,9 @@ case-sensitive-paths-webpack-plugin@^2.4.0:
   integrity sha512-roIFONhcxog0JSSWbvVAh3OocukmSgpqOH6YpMkCvav/ySIV3JKg4Dc8vYtQjYi/UxpNE36r/9v+VqTQqgkYmw==
 
 cborg@^4.2.14:
-  version "4.5.5"
-  resolved "https://registry.yarnpkg.com/cborg/-/cborg-4.5.5.tgz#a86a5ce764d3b7e08baf6e7c292c2741a60fc15a"
-  integrity sha512-Vf79xRZWRxzzwNBC+VPvMftaMJdCLPzTEyy68ZDEpGXAPmXDkcO9Ate2jJcc9tRR8K9sSlb0doddfgw3BTeRLQ==
+  version "4.5.8"
+  resolved "https://registry.yarnpkg.com/cborg/-/cborg-4.5.8.tgz#49cf664711237e4eb6197c841a2de79163e58c62"
+  integrity sha512-6/viltD51JklRhq4L7jC3zgy6gryuG5xfZ3kzpE+PravtyeQLeQmCYLREhQH7pWENg5pY4Yu/XCd6a7dKScVlw==
 
 chalk@5.6.2, chalk@^5.4.1:
   version "5.6.2"
