@@ -23,7 +23,8 @@ module.exports = {
         crypto: require.resolve('crypto-browserify'),
         stream: require.resolve('stream-browserify'),
         buffer: require.resolve('buffer'),
-        process: require.resolve('process/browser')
+        process: require.resolve('process/browser'),
+        vm: false  // Disable vm module (not needed in browser)
       };
       
       // Add process global

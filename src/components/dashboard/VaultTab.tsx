@@ -7,9 +7,6 @@ import {
   Database, 
   RefreshCw, 
   Server, 
-  CheckCircle,
-  AlertCircle,
-  Plus,
   Wifi,
   WifiOff
 } from 'lucide-react';
@@ -156,11 +153,12 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
   // Network stats
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
-  const [replicationStats, setReplicationStats] = useState<ReplicationStats | null>(null);
+  const [replicationStats] = useState<ReplicationStats | null>(null);
   
   // Nodes
   const [nodes, setNodes] = useState<NodeWithHealth[]>([]);
   const [loading, setLoading] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingNode, setEditingNode] = useState<NodeInfo | null>(null);
   
@@ -224,6 +222,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       fetchAppRegistryData();
     }, 10000);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p2pPeers]);
 
 
@@ -234,9 +233,12 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       console.log('[VaultTab] Using pure P2P discovery, skipping on-chain registry');
       console.log('[VaultTab] P2P state:', p2pState, 'Connected:', p2pConnected, 'Peers:', p2pPeers.length);
       
+      // Always set loading to false immediately - don't block UI
+      setLoading(false);
+      
       if (p2pPeers.length === 0) {
-        console.log('[VaultTab] No P2P peers available yet');
-        setLoading(false);
+        console.log('[VaultTab] No P2P peers available yet - showing empty state');
+        setNodes([]);
         return;
       }
 
@@ -359,6 +361,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleAddNode(e: React.FormEvent) {
     e.preventDefault();
     
@@ -415,6 +418,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleUpdateNode(e: React.FormEvent) {
     e.preventDefault();
     if (!editingNode) return;
@@ -968,7 +972,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       const appIds = await contract.getAllAppIds();
       const apps = await Promise.all(
         appIds.map(async (appId: string) => {
-          const [appName, owner, active, registeredAt, burnedAmount] = await contract.getApp(appId);
+          const [appName, owner, active, , burnedAmount] = await contract.getApp(appId);
           return {
             appId,
             appName,
@@ -1097,7 +1101,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       }
 
       const tx = await contentRegistry.deleteOwnedContent();
-      const receipt = await tx.wait();
+      await tx.wait();
 
       const deletedCount = Number(count);
       setDeleteResult({ count: deletedCount });

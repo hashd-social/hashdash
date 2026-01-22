@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { Percent, Save, RefreshCw } from 'lucide-react';
+import { Save, RefreshCw } from 'lucide-react';
 import { useToast } from '../Toast';
 import { CONTRACT_ADDRESSES, HASHD_ID_ABI } from '../../config/contracts';
 
