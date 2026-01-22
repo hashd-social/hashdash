@@ -242,36 +242,39 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         return;
       }
 
-      // Use peer data directly - floodsub announcements already include all health data
-      const discoveredNodes = p2pPeers.map((peer: any) => {
-        console.log(`[VaultTab] Using peer data for ${peer.peerId.slice(0, 12)}:`, peer);
-        return {
-          nodeId: peer.nodeId || peer.peerId.slice(0, 12),
-          owner: '',
-          publicKey: peer.publicKey || '',
-          url: '',
-          metadataHash: '',
-          registeredAt: 0,
-          active: true,
-          loading: false,
-          isRegistered: peer.registeredOnChain || false,
-          health: {
-            status: peer.status || 'healthy',
-            storedBlobs: peer.blobCount || 0,
-            totalSize: peer.storageUsed || 0,
-            uptime: peer.uptime || 0,
-            successRate: peer.metrics?.successRate || 1,
-            peers: 0,
-            requestsLastHour: peer.metrics?.requestsLastHour || 0,
-            avgResponseTime: peer.metrics?.avgResponseTime || 0,
-            peerId: peer.peerId,
-            nodeId: peer.nodeId,
-            version: peer.version,
-            minVersion: peer.minVersion,
-            integrity: peer.integrity
-          }
-        };
-      }) as NodeWithHealth[];
+      // Use floodsub announcement data only - health protocol is unreliable
+      // Filter out relay peers (they don't have nodeId from announcements)
+      const discoveredNodes = p2pPeers
+        .filter((peer: any) => peer.nodeId) // Only include peers with nodeId (storage nodes, not relays)
+        .map((peer: any) => {
+          console.log(`[VaultTab] Using peer data for ${peer.peerId.slice(0, 12)}:`, peer);
+          return {
+            nodeId: peer.nodeId || peer.peerId.slice(0, 12),
+            owner: '',
+            publicKey: peer.publicKey || '',
+            url: '',
+            metadataHash: '',
+            registeredAt: 0,
+            active: true,
+            loading: false,
+            isRegistered: peer.registeredOnChain || false,
+            health: {
+              status: peer.status || 'healthy',
+              storedBlobs: peer.blobCount || 0,
+              totalSize: peer.storageUsed || 0,
+              uptime: peer.uptime || 0,
+              successRate: peer.metrics?.successRate || 1,
+              peers: 0,
+              requestsLastHour: peer.metrics?.requestsLastHour || 0,
+              avgResponseTime: peer.metrics?.avgResponseTime || 0,
+              peerId: peer.peerId,
+              nodeId: peer.nodeId,
+              version: peer.version,
+              minVersion: peer.minVersion,
+              integrity: peer.integrity
+            }
+          };
+        }) as NodeWithHealth[];
 
       console.log(`[VaultTab] Discovered ${discoveredNodes.length} nodes via P2P`);
       
@@ -719,28 +722,19 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         return;
       }
       
-      // Check if node is in peer list
-      const peerExists = p2pPeers.some(p => p.peerId === nodePeerId);
-      if (!peerExists) {
+      // Get peer data directly from p2pPeers (already has all data from floodsub announcements)
+      const peer = p2pPeers.find(p => p.peerId === nodePeerId) as any;
+      if (!peer) {
         alert(`⚠️ Node not found in P2P network.\nPeer ID: ${nodePeerId.slice(0, 20)}...\n\nThe node may be offline or not connected to this P2P network.\nPlease enter the public key manually.`);
         return;
       }
       
-      // Try to get node health via P2P
-      console.log('[VaultTab] Attempting to get health for peer:', nodePeerId);
-      const health = await getNodeHealth(nodePeerId);
+      console.log('[VaultTab] Found peer data:', peer);
       
-      if (!health) {
-        alert('⚠️ Could not get node health.\nNode may not be responding.\nPlease enter the public key manually.');
-        return;
-      }
-      
-      console.log('[VaultTab] Got health response:', health);
-      
-      if (health.secp256k1PublicKey) {
-        setNodePublicKey(health.secp256k1PublicKey);
-        alert(`✅ Found node!\nPublic key auto-filled from node's health endpoint.`);
-      } else if (health.publicKey) {
+      if (peer.secp256k1PublicKey) {
+        setNodePublicKey(peer.secp256k1PublicKey);
+        alert(`✅ Found node!\nPublic key auto-filled from peer announcement.`);
+      } else if (peer.publicKey) {
         alert('⚠️ Node found but only Ed25519 key available.\nPlease restart the node to get secp256k1 key, or enter it manually.');
       } else {
         alert('⚠️ Node found but no public key available.\nPlease enter the public key manually.');

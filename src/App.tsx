@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ToastProvider } from './components/Toast';
 import { ByteCaveProvider } from '@gethashd/bytecave-browser';
 import { Dashboard } from './components/Dashboard';
@@ -11,11 +11,38 @@ function App() {
   const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
   const relayPeers = relayPeersEnv ? relayPeersEnv.split(',').map(p => p.trim()).filter(Boolean) : [];
   const relayHttpUrl = process.env.REACT_APP_RELAY_HTTP_URL || '';
+  
+  // Load directNodeAddrs from localStorage for relay fallback
+  const [directNodeAddrs, setDirectNodeAddrs] = useState<string[] | null>(null);
+  
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('bytecave_peers');
+      if (stored) {
+        const config = JSON.parse(stored);
+        if (config.directNodeAddrs && Array.isArray(config.directNodeAddrs)) {
+          console.log('[App] Loaded directNodeAddrs from localStorage:', config.directNodeAddrs.length);
+          setDirectNodeAddrs(config.directNodeAddrs);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('[App] Failed to load directNodeAddrs from localStorage:', error);
+    }
+    // Set to empty array if nothing found
+    setDirectNodeAddrs([]);
+  }, []);
+
+  // Wait for localStorage to load before rendering provider
+  if (directNodeAddrs === null) {
+    return <div>Loading...</div>;
+  }
 
   console.log('[App] ByteCave Config:', {
     vaultRegistry,
     relayPeers,
     relayHttpUrl,
+    directNodeAddrs: directNodeAddrs.length,
     hasRelayHttpUrl: !!relayHttpUrl
   });
 
@@ -28,6 +55,7 @@ function App() {
         appId="hashd"
         relayPeers={relayPeers}
         relayHttpUrl={relayHttpUrl}
+        directNodeAddrs={directNodeAddrs}
       >
         <Dashboard />
       </ByteCaveProvider>
