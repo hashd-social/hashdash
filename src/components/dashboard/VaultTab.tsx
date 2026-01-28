@@ -944,13 +944,22 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         throw new Error(`Cannot get signature from node: ${error.message}. Make sure your node is running and accessible at http://localhost:5001`);
       }
       
-      // Check current allowance
+      // Check token balance and allowance
       if (HASHD_TOKEN_ADDRESS) {
         const tokenContract = new ethers.Contract(HASHD_TOKEN_ADDRESS, ERC20_ABI, signer);
-        const currentAllowance = await tokenContract.allowance(userAddress, VAULT_REGISTRY_ADDRESS);
         
-        console.log('[Registration] Current allowance:', ethers.formatEther(currentAllowance), 'HASHD');
+        // Check balance first
+        const balance = await tokenContract.balanceOf(userAddress);
+        console.log('[Registration] HASHD balance:', ethers.formatEther(balance), 'HASHD');
         console.log('[Registration] Required stake:', ethers.formatEther(stakeAmountWei), 'HASHD');
+        
+        if (balance < stakeAmountWei) {
+          throw new Error(`Insufficient HASHD balance. You have ${ethers.formatEther(balance)} HASHD but need ${ethers.formatEther(stakeAmountWei)} HASHD for staking.`);
+        }
+        
+        // Check allowance
+        const currentAllowance = await tokenContract.allowance(userAddress, VAULT_REGISTRY_ADDRESS);
+        console.log('[Registration] Current allowance:', ethers.formatEther(currentAllowance), 'HASHD');
         
         if (currentAllowance < stakeAmountWei) {
           console.log('[Registration] Approving tokens...');
@@ -960,6 +969,8 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         } else {
           console.log('[Registration] Sufficient allowance already exists');
         }
+      } else {
+        throw new Error('HASHD token address not configured');
       }
       
       // Log registration parameters for debugging
