@@ -98,26 +98,26 @@ const HASHID_ABI = [
 
 // ABI for VaultNodeRegistry
 const VAULT_REGISTRY_ABI = [
-  'function registerNode(bytes _publicKey, string _peerId, bytes32 _metadataHash, uint256 _stakeAmount, bytes _signature) external returns (bytes32)',
-  'function deregisterNode(bytes32 _nodeId) external',
-  'function updateNode(bytes32 _nodeId, string _url, bytes32 _metadataHash) external',
-  'function reactivateNode(bytes32 _nodeId) external',
-  'function setCanRegisterNode(bool _canRegister) external',
-  'function canRegisterNode() external view returns (bool)',
-  'function getActiveNodes() external view returns (bytes32[])',
-  'function getAllNodes(uint256 _offset, uint256 _limit) external view returns (bytes32[])',
-  'function getNode(bytes32 _nodeId) external view returns (tuple(address owner, bytes publicKey, string peerId, bytes32 metadataHash, uint256 registeredAt, bool active))',
-  'function getNodeCount() external view returns (uint256 total, uint256 active)',
-  'function setReplicationFactor(uint256 _factor) external',
-  'function replicationFactor() external view returns (uint256)',
-  'function setMinVersion(string _version) external',
-  'function minVersion() external view returns (string)',
-  'function setMinimumStake(uint256 _newMinimum) external',
-  'function setMaximumStake(uint256 _newMaximum) external',
-  'function setWithdrawalTimelock(uint256 _newTimelock) external',
-  'function minimumStake() external view returns (uint256)',
-  'function maximumStake() external view returns (uint256)',
-  'function withdrawalTimelock() external view returns (uint256)'
+  'function registerNode(bytes publicKey, string peerId, bytes32 metadataHash, uint256 stakeAmount, bytes signature) returns (bytes32)',
+  'function deregisterNode(bytes32 nodeId)',
+  'function updateNode(bytes32 nodeId, string url, bytes32 metadataHash)',
+  'function reactivateNode(bytes32 nodeId)',
+  'function setCanRegisterNode(bool canRegister)',
+  'function canRegisterNode() view returns (bool)',
+  'function getActiveNodes() view returns (bytes32[])',
+  'function getAllNodes(uint256 offset, uint256 limit) view returns (bytes32[])',
+  'function getNode(bytes32 nodeId) view returns (tuple(address owner, bytes publicKey, string peerId, bytes32 metadataHash, uint256 registeredAt, bool active))',
+  'function getNodeCount() view returns (uint256 total, uint256 active)',
+  'function setReplicationFactor(uint256 factor)',
+  'function replicationFactor() view returns (uint256)',
+  'function setMinVersion(string version)',
+  'function minVersion() view returns (string)',
+  'function setMinimumStake(uint256 newMinimum)',
+  'function setMaximumStake(uint256 newMaximum)',
+  'function setWithdrawalTimelock(uint256 newTimelock)',
+  'function minimumStake() view returns (uint256)',
+  'function maximumStake() view returns (uint256)',
+  'function withdrawalTimelock() view returns (uint256)'
 ];
 
 // ERC20 ABI for HASHD token
