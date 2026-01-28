@@ -944,22 +944,65 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         throw new Error(`Cannot get signature from node: ${error.message}. Make sure your node is running and accessible at http://localhost:5001`);
       }
       
-      // Approve HASHD tokens first
+      // Check current allowance
       if (HASHD_TOKEN_ADDRESS) {
         const tokenContract = new ethers.Contract(HASHD_TOKEN_ADDRESS, ERC20_ABI, signer);
-        const approveTx = await tokenContract.approve(VAULT_REGISTRY_ADDRESS, stakeAmountWei);
-        await approveTx.wait();
+        const currentAllowance = await tokenContract.allowance(userAddress, VAULT_REGISTRY_ADDRESS);
+        
+        console.log('[Registration] Current allowance:', ethers.formatEther(currentAllowance), 'HASHD');
+        console.log('[Registration] Required stake:', ethers.formatEther(stakeAmountWei), 'HASHD');
+        
+        if (currentAllowance < stakeAmountWei) {
+          console.log('[Registration] Approving tokens...');
+          const approveTx = await tokenContract.approve(VAULT_REGISTRY_ADDRESS, stakeAmountWei);
+          await approveTx.wait();
+          console.log('[Registration] Tokens approved');
+        } else {
+          console.log('[Registration] Sufficient allowance already exists');
+        }
       }
       
-      // Register node
-      const tx = await contract.registerNode(
-        publicKey,
-        nodePeerId,
+      // Log registration parameters for debugging
+      console.log('[Registration] Parameters:', {
+        publicKey: publicKey.slice(0, 20) + '...',
+        publicKeyLength: publicKey.length,
+        peerId: nodePeerId,
         metadataHash,
-        stakeAmountWei,
-        signature
-      );
-      await tx.wait();
+        stakeAmount: ethers.formatEther(stakeAmountWei),
+        signatureLength: signature.length
+      });
+      
+      // Try to call the contract and catch specific errors
+      try {
+        // Register node
+        const tx = await contract.registerNode(
+          publicKey,
+          nodePeerId,
+          metadataHash,
+          stakeAmountWei,
+          signature
+        );
+        await tx.wait();
+      } catch (contractError: any) {
+        // Try to decode the error
+        console.error('[Registration] Contract error:', contractError);
+        
+        // Check for specific error types
+        if (contractError.message?.includes('OwnerAlreadyHasNode')) {
+          throw new Error('You already have a registered node. Deregister it first before registering a new one.');
+        } else if (contractError.message?.includes('DuplicatePeerId')) {
+          throw new Error('This peer ID is already registered by another node.');
+        } else if (contractError.message?.includes('InvalidPublicKey')) {
+          throw new Error('Invalid public key format. Expected 64 bytes (130 hex chars with 0x prefix).');
+        } else if (contractError.message?.includes('InsufficientStake')) {
+          throw new Error(`Stake amount too low. Minimum: ${minimumStake} HASHD`);
+        } else if (contractError.message?.includes('ExcessiveStake')) {
+          throw new Error(`Stake amount too high. Maximum: ${maximumStake} HASHD`);
+        } else if (contractError.message?.includes('Signature does not match public key')) {
+          throw new Error('Signature verification failed. The signature does not match the public key.');
+        }
+        throw contractError;
+      }
 
       alert(`✅ Node registered successfully!\nPeer ID: ${nodePeerId}\nStake: ${nodeStakeAmount} HASHD`);
       setNodePeerId('');
