@@ -976,12 +976,22 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       // Log registration parameters for debugging
       console.log('[Registration] Parameters:', {
         publicKey: publicKey.slice(0, 20) + '...',
+        publicKeyFull: publicKey,
         publicKeyLength: publicKey.length,
         peerId: nodePeerId,
+        peerIdLength: nodePeerId.length,
         metadataHash,
         stakeAmount: ethers.formatEther(stakeAmountWei),
-        signatureLength: signature.length
+        stakeAmountWei: stakeAmountWei.toString(),
+        signature: signature.slice(0, 20) + '...',
+        signatureFull: signature,
+        signatureLength: signature.length,
+        userAddress
       });
+      
+      // Wait a moment after approval for blockchain state to settle
+      console.log('[Registration] Waiting for blockchain state to settle...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Try to call the contract and catch specific errors
       try {
