@@ -1,7 +1,7 @@
 import React from 'react';
-import { Users, Globe, Percent, Wallet, FileCode, Sparkles, Database } from 'lucide-react';
+import { Users, Globe, Percent, Wallet, FileCode, Database, Hash } from 'lucide-react';
 
-export type TabId = 'waitlist' | 'domains' | 'mint' | 'royalties' | 'treasury' | 'contracts' | 'vault';
+export type TabId =  'vault' | 'contracts' | 'domains' | 'mint' | 'royalties' | 'treasury' | 'waitlist';
 
 interface Tab {
   id: TabId;
@@ -10,13 +10,13 @@ interface Tab {
 }
 
 const tabs: Tab[] = [
-  { id: 'waitlist', label: 'Waitlist', icon: <Users size={18} /> },
+  { id: 'vault', label: 'ByteCave', icon: <Database size={18} /> }, 
+  { id: 'contracts', label: 'Contracts', icon: <FileCode size={18} /> },   
   { id: 'domains', label: 'Domains', icon: <Globe size={18} /> },
-  { id: 'mint', label: 'Mint', icon: <Sparkles size={18} /> },
+  { id: 'mint', label: 'HashIDs', icon: <Hash size={18} /> },
   { id: 'royalties', label: 'Royalties', icon: <Percent size={18} /> },
   { id: 'treasury', label: 'Treasury', icon: <Wallet size={18} /> },
-  { id: 'contracts', label: 'Contracts', icon: <FileCode size={18} /> },
-  { id: 'vault', label: 'ByteCave', icon: <Database size={18} /> },
+  { id: 'waitlist', label: 'Waitlist', icon: <Users size={18} /> },  
 ];
 
 interface TabNavigationProps {

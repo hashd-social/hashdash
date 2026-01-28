@@ -2,10 +2,16 @@ import React from 'react';
 import { FileCode, ExternalLink, Copy, Check, Database, Cpu, Coins } from 'lucide-react';
 import { useToast } from '../Toast';
 import { getAllContractInfo, NETWORK_CONFIG, ContractInfo } from '../../config/contracts';
+import { ContractExplorer } from './ContractExplorer';
 
-export const ContractsTab: React.FC = () => {
+interface ContractsTabProps {
+  userAddress: string;
+}
+
+export const ContractsTab: React.FC<ContractsTabProps> = ({ userAddress }) => {
   const toast = useToast();
   const [copiedAddress, setCopiedAddress] = React.useState<string | null>(null);
+  const [selectedContract, setSelectedContract] = React.useState<ContractInfo | null>(null);
   
   const contracts = getAllContractInfo();
   const tokenContracts = contracts.filter(c => c.type === 'token');
@@ -28,7 +34,10 @@ export const ContractsTab: React.FC = () => {
   };
 
   const ContractCard: React.FC<{ contract: ContractInfo }> = ({ contract }) => (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors">
+    <div 
+      onClick={() => setSelectedContract(contract)}
+      className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-cyan-500/50 transition-all cursor-pointer group"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {contract.type === 'token' ? (
@@ -38,11 +47,14 @@ export const ContractsTab: React.FC = () => {
           ) : (
             <Cpu size={18} className="text-cyan-400" />
           )}
-          <span className="text-white font-medium">{contract.name}</span>
+          <span className="text-white font-medium group-hover:text-cyan-400 transition-colors">{contract.name}</span>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => copyToClipboard(contract.address)}
+            onClick={(e) => {
+              e.stopPropagation();
+              copyToClipboard(contract.address);
+            }}
             className="p-1.5 text-gray-400 hover:text-white transition-colors"
             title="Copy address"
           >
@@ -57,6 +69,7 @@ export const ContractsTab: React.FC = () => {
               href={`https://explorer.megaeth.com/address/${contract.address}`}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="p-1.5 text-gray-400 hover:text-white transition-colors"
               title="View on explorer"
             >
@@ -65,11 +78,25 @@ export const ContractsTab: React.FC = () => {
           )}
         </div>
       </div>
-      <div className="mt-2">
+      <div className="mt-2 flex items-center justify-between">
         <code className="text-sm text-gray-400 font-mono">{truncateAddress(contract.address)}</code>
+        <span className="text-xs text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity">
+          Click to explore →
+        </span>
       </div>
     </div>
   );
+
+  // Show explorer view if a contract is selected
+  if (selectedContract) {
+    return (
+      <ContractExplorer
+        contract={selectedContract}
+        onBack={() => setSelectedContract(null)}
+        userAddress={userAddress}
+      />
+    );
+  }
 
   if (contracts.length === 0) {
     return (

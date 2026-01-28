@@ -23,7 +23,7 @@ export const RoyaltiesTab: React.FC<RoyaltiesTabProps> = ({ userAddress }) => {
   const [saving, setSaving] = useState(false);
 
   const fetchRoyaltyInfo = useCallback(async () => {
-    if (!CONTRACT_ADDRESSES.HASHD_TAG) {
+    if (!CONTRACT_ADDRESSES.HASHID) {
       setLoading(false);
       return;
     }
@@ -31,7 +31,7 @@ export const RoyaltiesTab: React.FC<RoyaltiesTabProps> = ({ userAddress }) => {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const hashID = new ethers.Contract(
-        CONTRACT_ADDRESSES.HASHD_TAG,
+        CONTRACT_ADDRESSES.HASHID,
         HASHD_ID_ABI,
         provider
       );
@@ -82,7 +82,7 @@ export const RoyaltiesTab: React.FC<RoyaltiesTabProps> = ({ userAddress }) => {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const hashID = new ethers.Contract(
-        CONTRACT_ADDRESSES.HASHD_TAG,
+        CONTRACT_ADDRESSES.HASHID,
         HASHD_ID_ABI,
         signer
       );
@@ -112,7 +112,7 @@ export const RoyaltiesTab: React.FC<RoyaltiesTabProps> = ({ userAddress }) => {
     );
   }
 
-  if (!CONTRACT_ADDRESSES.HASHD_TAG) {
+  if (!CONTRACT_ADDRESSES.HASHID) {
     return (
       <div className="bg-yellow-900/20 border border-yellow-600 rounded-lg p-4 text-yellow-400">
         Contract addresses not configured. Run the start-all script to deploy contracts.

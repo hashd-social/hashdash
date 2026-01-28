@@ -14,14 +14,14 @@ export const CidViewer: React.FC = () => {
 
   const handleLoadContent = () => {
     let cid = cidInput.trim();
-    setDecryptedText(null);
-    setIsEncrypted(null);
-    setContentType('unknown');
-    if (cid.startsWith('hashd://')) {
-      setHashdUrl(cid);
-    } else if (cid) {
-      setHashdUrl(`hashd://${cid}`);
+    // Only reset state if loading a different CID
+    const newUrl = cid.startsWith('hashd://') ? cid : `hashd://${cid}`;
+    if (newUrl !== hashdUrl) {
+      setDecryptedText(null);
+      setIsEncrypted(null);
+      setContentType('unknown');
     }
+    setHashdUrl(newUrl);
   };
 
   // Try to decrypt the blob when it's loaded, with fallback for unencrypted content

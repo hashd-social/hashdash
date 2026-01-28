@@ -11,6 +11,7 @@ function App() {
   const relayPeersEnv = process.env.REACT_APP_RELAY_PEERS || '';
   const relayPeers = relayPeersEnv ? relayPeersEnv.split(',').map(p => p.trim()).filter(Boolean) : [];
   const relayHttpUrl = process.env.REACT_APP_RELAY_HTTP_URL || '';
+  const relayWsUrl = process.env.REACT_APP_RELAY_WS_URL || 'ws://localhost:4003';
   
   // Load directNodeAddrs from localStorage for relay fallback
   const [directNodeAddrs, setDirectNodeAddrs] = useState<string[] | null>(null);
@@ -42,6 +43,7 @@ function App() {
     vaultRegistry,
     relayPeers,
     relayHttpUrl,
+    relayWsUrl,
     directNodeAddrs: directNodeAddrs.length,
     hasRelayHttpUrl: !!relayHttpUrl
   });
@@ -55,6 +57,7 @@ function App() {
         appId="hashd"
         relayPeers={relayPeers}
         relayHttpUrl={relayHttpUrl}
+        relayWsUrl={relayWsUrl}
         directNodeAddrs={directNodeAddrs}
       >
         <Dashboard />

@@ -74,7 +74,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       const code = await provider.getCode(CONTRACT_ADDRESSES.ACCOUNT_REGISTRY);
       console.log('Contract code length:', code.length, 'bytes');
       const hashID = new ethers.Contract(
-        CONTRACT_ADDRESSES.HASHD_TAG,
+        CONTRACT_ADDRESSES.HASHID,
         HASHD_ID_ABI,
         provider
       );
@@ -302,7 +302,7 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const hashID = new ethers.Contract(
-        CONTRACT_ADDRESSES.HASHD_TAG,
+        CONTRACT_ADDRESSES.HASHID,
         HASHD_ID_ABI,
         signer
       );

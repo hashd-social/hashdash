@@ -20,7 +20,7 @@ export const CONTRACT_ADDRESSES = {
   // Logic Contracts (Upgradeable)
   KEY_REGISTRY: process.env.REACT_APP_KEY_REGISTRY || '',
   ACCOUNT_REGISTRY: process.env.REACT_APP_ACCOUNT_REGISTRY || '',
-  HASHD_TAG: process.env.REACT_APP_HASHD_TAG || '',
+  HASHID: process.env.REACT_APP_HASHID || '',
   MESSAGE_CONTRACT: process.env.REACT_APP_MESSAGE_CONTRACT || '',
   USER_PROFILE: process.env.REACT_APP_USER_PROFILE || '',
   GROUP_POSTS_DEPLOYER: process.env.REACT_APP_GROUP_POSTS_DEPLOYER || '',
@@ -102,13 +102,14 @@ export interface ContractInfo {
   name: string;
   address: string;
   type: 'token' | 'storage' | 'logic';
+  contractName?: string | null; // Actual contract name for ABI loading (if different from display name), null if no ABI available
 }
 
 // Helper to get all contract info for display
 export function getAllContractInfo(): ContractInfo[] {
   const contracts: ContractInfo[] = [
     // Token contracts
-    { name: 'HASHD Token', address: CONTRACT_ADDRESSES.HASHD_TOKEN, type: 'token' as const },
+    { name: 'HASHD Token', address: CONTRACT_ADDRESSES.HASHD_TOKEN, type: 'token' as const, contractName: 'HASHD' },
     // Storage contracts
     { name: 'MessageStorage', address: CONTRACT_ADDRESSES.MESSAGE_STORAGE, type: 'storage' as const },
     { name: 'KeyStorage', address: CONTRACT_ADDRESSES.KEY_STORAGE, type: 'storage' as const },
@@ -122,13 +123,13 @@ export function getAllContractInfo(): ContractInfo[] {
     // Logic contracts
     { name: 'KeyRegistry', address: CONTRACT_ADDRESSES.KEY_REGISTRY, type: 'logic' as const },
     { name: 'AccountRegistry', address: CONTRACT_ADDRESSES.ACCOUNT_REGISTRY, type: 'logic' as const },
-    { name: 'HashID', address: CONTRACT_ADDRESSES.HASHD_TAG, type: 'logic' as const },
+    { name: 'HashID', address: CONTRACT_ADDRESSES.HASHID, type: 'logic' as const },
     { name: 'PlatformTreasury', address: CONTRACT_ADDRESSES.PLATFORM_TREASURY, type: 'logic' as const },
     { name: 'MessageContract', address: CONTRACT_ADDRESSES.MESSAGE_CONTRACT, type: 'logic' as const },
     { name: 'UserProfile', address: CONTRACT_ADDRESSES.USER_PROFILE, type: 'logic' as const },
-    { name: 'GroupPostsDeployer', address: CONTRACT_ADDRESSES.GROUP_POSTS_DEPLOYER, type: 'logic' as const },
-    { name: 'GroupCommentsDeployer', address: CONTRACT_ADDRESSES.GROUP_COMMENTS_DEPLOYER, type: 'logic' as const },
-    { name: 'BondingCurveDeployer', address: CONTRACT_ADDRESSES.BONDING_CURVE_DEPLOYER, type: 'logic' as const },
+    { name: 'GroupPostsDeployer', address: CONTRACT_ADDRESSES.GROUP_POSTS_DEPLOYER, type: 'logic' as const, contractName: 'GroupPosts' },
+    { name: 'GroupCommentsDeployer', address: CONTRACT_ADDRESSES.GROUP_COMMENTS_DEPLOYER, type: 'logic' as const, contractName: 'GroupComments' },
+    { name: 'BondingCurveDeployer', address: CONTRACT_ADDRESSES.BONDING_CURVE_DEPLOYER, type: 'logic' as const, contractName: 'GroupTokenBondingCurve' },
     { name: 'GroupFactory', address: CONTRACT_ADDRESSES.GROUP_FACTORY, type: 'logic' as const },
     { name: 'DeploymentRegistry', address: CONTRACT_ADDRESSES.DEPLOYMENT_REGISTRY, type: 'logic' as const },
     { name: 'VaultNodeRegistry', address: CONTRACT_ADDRESSES.VAULT_REGISTRY, type: 'logic' as const },

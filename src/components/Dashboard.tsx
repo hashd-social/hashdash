@@ -25,7 +25,7 @@ export const Dashboard: React.FC = () => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [signature, setSignature] = useState('');
   const [message, setMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<TabId>('waitlist');
+  const [activeTab, setActiveTab] = useState<TabId>('vault');
 
   // Auto-reconnect on page load
   useEffect(() => {
@@ -126,7 +126,7 @@ export const Dashboard: React.FC = () => {
       case 'treasury':
         return <TreasuryTab userAddress={userAddress} />;
       case 'contracts':
-        return <ContractsTab />;
+        return <ContractsTab userAddress={userAddress} />;
       case 'vault':
         return <VaultTab userAddress={userAddress} />;
       default:

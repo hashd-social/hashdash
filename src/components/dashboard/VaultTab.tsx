@@ -79,12 +79,21 @@ const VAULT_REGISTRY_ADDRESS = process.env.REACT_APP_VAULT_REGISTRY;
 const HASHD_TOKEN_ADDRESS = process.env.REACT_APP_HASHD_TOKEN;
 const APP_REGISTRY_ADDRESS = process.env.REACT_APP_APP_REGISTRY;
 const CONTENT_REGISTRY_ADDRESS = process.env.REACT_APP_CONTENT_REGISTRY;
+const HASHID_ADDRESS = process.env.REACT_APP_HASHID;
 
 // ABI for ContentRegistry
 const CONTENT_REGISTRY_ABI = [
   'function deleteOwnedContent() external returns (uint256)',
   'function getOwnerCidCount(address owner) external view returns (uint256)',
   'function getOwnerCids(address owner) external view returns (bytes32[])'
+];
+
+// ABI for HashID
+const HASHID_ABI = [
+  'function balanceOf(address owner) view returns (uint256)',
+  'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
+  'function tokenIdToName(uint256 tokenId) view returns (string)',
+  'function ownerOf(uint256 tokenId) view returns (address)'
 ];
 
 // ABI for VaultNodeRegistry
@@ -178,6 +187,8 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
   const [storing, setStoring] = useState(false);
   const [deletingContent, setDeletingContent] = useState(false);
   const [deleteResult, setDeleteResult] = useState<{ count?: number; error?: string } | null>(null);
+  const [userHashIds, setUserHashIds] = useState<Array<{tokenId: string, name: string}>>([]);
+  const [selectedHashId, setSelectedHashId] = useState<string>('');
 
   // Vault Node Registry Configstate
   const [replicationFactor, setReplicationFactorInput] = useState('3');
@@ -217,20 +228,52 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
     console.log('[VaultTab] p2pPeers changed, count:', p2pPeers.length, 'peers:', p2pPeers.map(p => p.peerId.slice(0, 8)));
     fetchData();
     fetchAppRegistryData();
+    fetchUserHashIds();
     const interval = setInterval(() => {
       fetchData();
       fetchAppRegistryData();
     }, 10000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p2pPeers]);
+  }, [p2pPeers, userAddress]);
 
+  async function fetchUserHashIds() {
+    if (!userAddress || !HASHID_ADDRESS) return;
+
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const hashIdContract = new ethers.Contract(HASHID_ADDRESS, HASHID_ABI, provider);
+
+      // Use balanceOf + tokenOfOwnerByIndex instead of getTokenIdsByOwner to avoid gas issues
+      const balance = await hashIdContract.balanceOf(userAddress);
+      const tokens: Array<{ tokenId: string; name: string }> = [];
+
+      for (let i = 0; i < balance; i++) {
+        try {
+          const tokenId = await hashIdContract.tokenOfOwnerByIndex(userAddress, i);
+          const name = await hashIdContract.tokenIdToName(tokenId);
+          tokens.push({
+            tokenId: tokenId.toString(),
+            name: name || `Token #${tokenId}`
+          });
+        } catch (err) {
+          console.error(`Error fetching token at index ${i}:`, err);
+        }
+      }
+
+      setUserHashIds(tokens);
+      if (tokens.length > 0 && !selectedHashId) {
+        setSelectedHashId(tokens[0].tokenId);
+      }
+    } catch (error) {
+      console.error('Error fetching HashIDs:', error);
+    }
+  }
 
   async function fetchData() {
     try {
       // PURE P2P DISCOVERY - Skip on-chain registry query
       // Discover nodes directly from P2P network via relay peer directory
-      console.log('[VaultTab] Using pure P2P discovery, skipping on-chain registry');
       console.log('[VaultTab] P2P state:', p2pState, 'Connected:', p2pConnected, 'Peers:', p2pPeers.length);
       
       // Always set loading to false immediately - don't block UI
@@ -247,7 +290,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       const discoveredNodes = p2pPeers
         .filter((peer: any) => peer.nodeId) // Only include peers with nodeId (storage nodes, not relays)
         .map((peer: any) => {
-          console.log(`[VaultTab] Using peer data for ${peer.peerId.slice(0, 12)}:`, peer);
+          // console.log(`[VaultTab] Using peer data for ${peer.peerId.slice(0, 12)}:`, peer);
           return {
             nodeId: peer.nodeId || peer.peerId.slice(0, 12),
             owner: '',
@@ -257,7 +300,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
             registeredAt: 0,
             active: true,
             loading: false,
-            isRegistered: peer.registeredOnChain || false,
+            isRegistered: peer.isRegistered || false,
             health: {
               status: peer.status || 'healthy',
               storedBlobs: peer.blobCount || 0,
@@ -769,11 +812,43 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       
       const contract = new ethers.Contract(VAULT_REGISTRY_ADDRESS, VAULT_REGISTRY_ABI, signer);
       
+      // Validate and format nodeId as bytes32
+      let nodeIdBytes32: string;
+      const trimmedNodeId = nodeToDeregister.trim();
+      
+      if (trimmedNodeId.startsWith('0x')) {
+        // Already has 0x prefix, validate length
+        if (trimmedNodeId.length !== 66) {
+          alert('Invalid node ID format. Must be 66 characters (0x + 64 hex chars)');
+          return;
+        }
+        nodeIdBytes32 = trimmedNodeId;
+      } else {
+        // Add 0x prefix if missing
+        if (trimmedNodeId.length !== 64) {
+          alert('Invalid node ID format. Must be 64 hex characters (or 66 with 0x prefix)');
+          return;
+        }
+        nodeIdBytes32 = '0x' + trimmedNodeId;
+      }
+      
+      // Validate hex format
+      if (!/^0x[0-9a-fA-F]{64}$/.test(nodeIdBytes32)) {
+        alert('Invalid node ID format. Must be a valid hex string');
+        return;
+      }
+      
       // Check if node exists and is active
       try {
-        const nodeInfo = await contract.getNode(nodeToDeregister);
+        const nodeInfo = await contract.getNode(nodeIdBytes32);
         if (!nodeInfo.active) {
           alert('This node is already deregistered');
+          return;
+        }
+        
+        // Verify ownership
+        if (nodeInfo.owner.toLowerCase() !== userAddress.toLowerCase()) {
+          alert('You are not the owner of this node');
           return;
         }
       } catch (error) {
@@ -782,10 +857,10 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       }
       
       // Deregister node
-      const tx = await contract.deregisterNode(nodeToDeregister);
+      const tx = await contract.deregisterNode(nodeIdBytes32);
       await tx.wait();
 
-      alert(`✅ Node deregistered successfully!\nNode ID: ${nodeToDeregister.slice(0, 10)}...\nStaked tokens returned to wallet`);
+      alert(`✅ Node deregistered successfully!\nNode ID: ${nodeIdBytes32.slice(0, 10)}...\nStaked tokens returned to wallet`);
       setNodeToDeregister('');
       setTimeout(() => fetchData(), 500);
     } catch (error: any) {
@@ -981,6 +1056,11 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       return;
     }
 
+    if (!selectedHashId) {
+      alert('Please select a HashID token. You must own a HashID to store content.');
+      return;
+    }
+
     const activeNode = nodes.find(n => n.active && n.health?.status === 'healthy');
     if (!activeNode) {
       alert('No healthy nodes available');
@@ -994,6 +1074,9 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       // Create signer from MetaMask
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      console.log('[Test Storage] Signer address:', signerAddress);
+      console.log('[Test Storage] Using HashID token:', selectedHashId);
 
       const encryptedHex = await CryptoUtils.encryptText(testText);
       // Remove 0x prefix before converting from hex
@@ -1007,9 +1090,9 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
       let registrationResult = null;
       
-      // Step 1: Register content in ContentRegistry (on-chain)
-      console.log('[Test Storage] Registering content in ContentRegistry:', cid, 'appId:', testAppId);
-      registrationResult = await registerContent(cid, testAppId, signer);
+      // Step 1: Register content in ContentRegistry (on-chain) with HashID token
+      console.log('[Test Storage] Registering content in ContentRegistry:', cid, 'appId:', testAppId, 'hashIdToken:', selectedHashId);
+      registrationResult = await registerContent(cid, testAppId, selectedHashId, signer);
       
       if (!registrationResult.success) {
         throw new Error(`ContentRegistry registration failed: ${registrationResult.error}`);
@@ -1017,15 +1100,15 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
 
       console.log('[Test Storage] Content registered, tx hash:', registrationResult.txHash);
 
-      // Step 2: Store via P2P
-      const result = await p2pStore(ciphertext, testMimeType, signer);
+      // Step 2: Store via P2P with HashID token
+      const result = await p2pStore(ciphertext, testMimeType, signer, selectedHashId);
 
       if (!result.success) {
         throw new Error(result.error || 'Storage failed');
       }
 
       setStorageResult({ cid: result.cid });
-      const successMsg = `✅ Successfully registered and stored!\n\nContentRegistry TX: ${registrationResult?.txHash?.slice(0, 10)}...\nCID: ${result.cid}\nApp ID: ${testAppId}`;
+      const successMsg = `✅ Successfully registered and stored!\n\nContentRegistry TX: ${registrationResult?.txHash?.slice(0, 10)}...\nCID: ${result.cid}\nApp ID: ${testAppId}\nHashID: ${userHashIds.find(h => h.tokenId === selectedHashId)?.name}`;
       alert(successMsg);
       setTestText('');
       setTimeout(() => fetchData(), 500);
@@ -1261,7 +1344,8 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
                   if (n.nodeId === peer.peerId) return true;
                   return false;
                 });
-                const isRegistered = nodeData?.isRegistered || false;
+                // Use isRegistered directly from peer announcement - it's the source of truth
+                const isRegistered = peer.isRegistered || false;
                 const health = nodeData?.health;
                 const versionStatus = getVersionStatus(health?.version, health?.minVersion);
                 
@@ -1866,6 +1950,28 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         <div className="space-y-4">
           {/* Configuration Grid */}
           <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                HashID Token
+              </label>
+              <select
+                value={selectedHashId}
+                onChange={(e) => setSelectedHashId(e.target.value)}
+                disabled={userHashIds.length === 0}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-cyan-500 focus:outline-none text-sm disabled:opacity-50"
+              >
+                {userHashIds.length === 0 ? (
+                  <option value="">No HashID owned</option>
+                ) : (
+                  userHashIds.map(token => (
+                    <option key={token.tokenId} value={token.tokenId}>
+                      {token.name} (#{token.tokenId})
+                    </option>
+                  ))
+                )}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Required for storage authorization</p>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 App ID
