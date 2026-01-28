@@ -102,7 +102,8 @@ export const DomainsTab: React.FC<DomainsTabProps> = ({ userAddress }) => {
       const domainInfos: DomainInfo[] = await Promise.all(
         domainNames.map(async (name) => {
           const tierPrices = await accountRegistry.getDomainTierPrices(name);
-          const accountCount = await accountRegistry.getDomainAccountCount(name);
+          // Use HashID contract to get actual count of minted HashIDs for this domain
+          const accountCount = await hashID.getHashIdCountByDomain(name);
           let color = '00ffff'; // Default cyan
           let textColor = '000000'; // Default black
           try {
