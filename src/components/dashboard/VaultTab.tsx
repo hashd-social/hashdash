@@ -993,37 +993,61 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       console.log('[Registration] Waiting for blockchain state to settle...');
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Try to call the contract and catch specific errors
+      // Try to estimate gas first to get better error messages
       try {
-        // Register node
-        const tx = await contract.registerNode(
+        console.log('[Registration] Estimating gas...');
+        const gasEstimate = await contract.registerNode.estimateGas(
           publicKey,
           nodePeerId,
           metadataHash,
           stakeAmountWei,
           signature
         );
-        await tx.wait();
-      } catch (contractError: any) {
-        // Try to decode the error
-        console.error('[Registration] Contract error:', contractError);
+        console.log('[Registration] Gas estimate:', gasEstimate.toString());
+      } catch (estimateError: any) {
+        console.error('[Registration] Gas estimation failed:', estimateError);
+        
+        // Try to get more details from the error
+        if (estimateError.data) {
+          console.error('[Registration] Error data:', estimateError.data);
+        }
+        if (estimateError.transaction) {
+          console.error('[Registration] Failed transaction:', estimateError.transaction);
+        }
         
         // Check for specific error types
-        if (contractError.message?.includes('OwnerAlreadyHasNode')) {
+        if (estimateError.message?.includes('OwnerAlreadyHasNode')) {
           throw new Error('You already have a registered node. Deregister it first before registering a new one.');
-        } else if (contractError.message?.includes('DuplicatePeerId')) {
+        } else if (estimateError.message?.includes('DuplicatePeerId')) {
           throw new Error('This peer ID is already registered by another node.');
-        } else if (contractError.message?.includes('InvalidPublicKey')) {
+        } else if (estimateError.message?.includes('InvalidPublicKey')) {
           throw new Error('Invalid public key format. Expected 64 bytes (130 hex chars with 0x prefix).');
-        } else if (contractError.message?.includes('InsufficientStake')) {
+        } else if (estimateError.message?.includes('InsufficientStake')) {
           throw new Error(`Stake amount too low. Minimum: ${minimumStake} HASHD`);
-        } else if (contractError.message?.includes('ExcessiveStake')) {
+        } else if (estimateError.message?.includes('ExcessiveStake')) {
           throw new Error(`Stake amount too high. Maximum: ${maximumStake} HASHD`);
-        } else if (contractError.message?.includes('Signature does not match public key')) {
+        } else if (estimateError.message?.includes('Signature does not match public key')) {
           throw new Error('Signature verification failed. The signature does not match the public key.');
+        } else if (estimateError.message?.includes('Node registration is currently disabled')) {
+          throw new Error('Node registration is currently disabled by the contract owner.');
         }
-        throw contractError;
+        
+        throw new Error(`Gas estimation failed: ${estimateError.message}`);
       }
+      
+      // If gas estimation succeeded, proceed with the transaction
+      console.log('[Registration] Sending transaction...');
+      const tx = await contract.registerNode(
+        publicKey,
+        nodePeerId,
+        metadataHash,
+        stakeAmountWei,
+        signature
+      );
+      
+      console.log('[Registration] Transaction sent:', tx.hash);
+      const receipt = await tx.wait();
+      console.log('[Registration] Transaction confirmed:', receipt.hash);
 
       alert(`✅ Node registered successfully!\nPeer ID: ${nodePeerId}\nStake: ${nodeStakeAmount} HASHD`);
       setNodePeerId('');
