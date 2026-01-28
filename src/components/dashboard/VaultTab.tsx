@@ -774,11 +774,10 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       
       console.log('[VaultTab] Found peer data:', peer);
       
-      if (peer.secp256k1PublicKey) {
-        setNodePublicKey(peer.secp256k1PublicKey);
+      // The node announces its secp256k1 public key as 'publicKey' in the P2P announcement
+      if (peer.publicKey) {
+        setNodePublicKey(peer.publicKey);
         alert(`✅ Found node!\nPublic key auto-filled from peer announcement.`);
-      } else if (peer.publicKey) {
-        alert('⚠️ Node found but only Ed25519 key available.\nPlease restart the node to get secp256k1 key, or enter it manually.');
       } else {
         alert('⚠️ Node found but no public key available.\nPlease enter the public key manually.');
       }
