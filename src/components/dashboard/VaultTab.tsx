@@ -183,6 +183,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
   const [testText, setTestText] = useState('');
   const [testAppId, setTestAppId] = useState('hashd');
   const [testMimeType, setTestMimeType] = useState('application/octet-stream');
+  const [bypassContentRegistry, setBypassContentRegistry] = useState(false);
   const [storageResult, setStorageResult] = useState<{ cid?: string; error?: string } | null>(null);
   const [storing, setStoring] = useState(false);
   const [deletingContent, setDeletingContent] = useState(false);
@@ -914,34 +915,54 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       };
       const metadataHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(metadata)));
       
-      // Request signature from the node
-      // The node will sign the owner address with its secp256k1 private key
-      let signature: string;
-      try {
-        // Extract node URL from peer ID or use default
-        // For now, we'll need the user to provide the node URL or we can try to discover it
-        // Assuming node is running locally on default port
-        const nodeUrl = 'http://localhost:5001'; // TODO: Make this configurable or discoverable
-        
-        const signResponse = await fetch(`${nodeUrl}/sign-registration`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ownerAddress: userAddress })
-        });
-        
-        if (!signResponse.ok) {
-          const errorText = await signResponse.text();
-          throw new Error(`Failed to get signature from node: ${errorText}`);
+      // Get signature from node to prove ownership of P2P private key
+      // Try to find node's HTTP endpoint from P2P announcement, fallback to localhost ports
+      const peer = p2pPeers.find(p => p.peerId === nodePeerId);
+      if (!peer) {
+        throw new Error('Cannot find node in P2P network. Make sure the node is running and connected.');
+      }
+      
+      // Try nodeUrl from announcement, or fallback to common localhost ports
+      const nodeUrls = peer.nodeUrl 
+        ? [peer.nodeUrl]
+        : ['http://localhost:5001', 'http://localhost:5002', 'http://localhost:5003'];
+      
+      console.log('[Registration] Attempting to get signature from node. Trying URLs:', nodeUrls);
+      let signature: string | null = null;
+      let lastError: Error | null = null;
+      
+      for (const nodeUrl of nodeUrls) {
+        try {
+          console.log('[Registration] Trying:', nodeUrl);
+          const signResponse = await fetch(`${nodeUrl}/sign-registration`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ownerAddress: userAddress })
+          });
+          
+          if (!signResponse.ok) {
+            const errorText = await signResponse.text();
+            throw new Error(`HTTP ${signResponse.status}: ${errorText}`);
+          }
+          
+          const signData = await signResponse.json();
+          signature = signData.signature;
+          
+          if (!signature || signature.length !== 132) {
+            throw new Error('Invalid signature format received');
+          }
+          
+          console.log('[Registration] Signature obtained from', nodeUrl, ':', signature.slice(0, 20) + '...');
+          break; // Success - exit loop
+        } catch (error: any) {
+          console.log('[Registration] Failed to get signature from', nodeUrl, ':', error.message);
+          lastError = error;
+          continue; // Try next URL
         }
-        
-        const signData = await signResponse.json();
-        signature = signData.signature;
-        
-        if (!signature || signature.length !== 132) { // 0x + 130 hex chars (65 bytes)
-          throw new Error('Invalid signature received from node');
-        }
-      } catch (error: any) {
-        throw new Error(`Cannot get signature from node: ${error.message}. Make sure your node is running and accessible at http://localhost:5001`);
+      }
+      
+      if (!signature) {
+        throw new Error(`Cannot get signature from node. Tried: ${nodeUrls.join(', ')}. Last error: ${lastError?.message}. Make sure your node is running.`);
       }
       
       // Check token balance and allowance
@@ -993,6 +1014,20 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       console.log('[Registration] Waiting for blockchain state to settle...');
       await new Promise(resolve => setTimeout(resolve, 2000));
       
+      // Log all parameters being sent to contract
+      console.log('[Registration] Contract call parameters:', {
+        publicKey,
+        publicKeyLength: publicKey.length,
+        nodePeerId,
+        peerIdLength: nodePeerId.length,
+        metadataHash,
+        stakeAmount: ethers.formatEther(stakeAmountWei),
+        stakeAmountWei: stakeAmountWei.toString(),
+        signature,
+        signatureLength: signature.length,
+        userAddress
+      });
+      
       // Try to estimate gas first to get better error messages
       try {
         console.log('[Registration] Estimating gas...');
@@ -1006,6 +1041,7 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         console.log('[Registration] Gas estimate:', gasEstimate.toString());
       } catch (estimateError: any) {
         console.error('[Registration] Gas estimation failed:', estimateError);
+        console.error('[Registration] Full error object:', JSON.stringify(estimateError, null, 2));
         
         // Try to get more details from the error
         if (estimateError.data) {
@@ -1013,6 +1049,9 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         }
         if (estimateError.transaction) {
           console.error('[Registration] Failed transaction:', estimateError.transaction);
+        }
+        if (estimateError.error) {
+          console.error('[Registration] Nested error:', estimateError.error);
         }
         
         // Check for specific error types
@@ -1178,14 +1217,20 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
       let registrationResult = null;
       
       // Step 1: Register content in ContentRegistry (on-chain) with HashID token
-      console.log('[Test Storage] Registering content in ContentRegistry:', cid, 'appId:', testAppId, 'hashIdToken:', selectedHashId);
-      registrationResult = await registerContent(cid, testAppId, selectedHashId, signer);
-      
-      if (!registrationResult.success) {
-        throw new Error(`ContentRegistry registration failed: ${registrationResult.error}`);
-      }
+      // UNLESS bypass is enabled (for testing node rejection)
+      if (!bypassContentRegistry) {
+        console.log('[Test Storage] Registering content in ContentRegistry:', cid, 'appId:', testAppId, 'hashIdToken:', selectedHashId);
+        registrationResult = await registerContent(cid, testAppId, selectedHashId, signer);
+        
+        if (!registrationResult.success) {
+          throw new Error(`ContentRegistry registration failed: ${registrationResult.error}`);
+        }
 
-      console.log('[Test Storage] Content registered, tx hash:', registrationResult.txHash);
+        console.log('[Test Storage] Content registered, tx hash:', registrationResult.txHash);
+      } else {
+        console.warn('[Test Storage] ⚠️ BYPASSING ContentRegistry registration - content will NOT be registered on-chain');
+        console.warn('[Test Storage] Node should REJECT this storage request');
+      }
 
       // Step 2: Store via P2P with HashID token
       const result = await p2pStore(ciphertext, testMimeType, signer, selectedHashId);
@@ -2034,6 +2079,25 @@ export const VaultTab: React.FC<VaultTabProps> = ({ userAddress }) => {
         <p className="text-sm text-gray-400 mb-4">
           Configure and test storage with different parameters
         </p>
+        
+        {/* Bypass ContentRegistry Toggle */}
+        <div className="mb-4 p-3 bg-yellow-900/20 border border-yellow-600/30 rounded-lg">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={bypassContentRegistry}
+              onChange={(e) => setBypassContentRegistry(e.target.checked)}
+              className="w-4 h-4 text-yellow-600 bg-gray-700 border-gray-600 rounded focus:ring-yellow-500"
+            />
+            <div>
+              <span className="text-sm font-medium text-yellow-400">⚠️ Bypass ContentRegistry (Test Mode)</span>
+              <p className="text-xs text-gray-400 mt-1">
+                Skip on-chain registration to test if nodes properly reject unregistered content
+              </p>
+            </div>
+          </label>
+        </div>
+        
         <div className="space-y-4">
           {/* Configuration Grid */}
           <div className="grid grid-cols-3 gap-4">
