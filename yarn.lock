@@ -1415,10 +1415,10 @@
     ethereum-cryptography "^2.0.0"
     micro-ftch "^0.3.1"
 
-"@gethashd/bytecave-browser@1.0.46":
-  version "1.0.46"
-  resolved "https://registry.yarnpkg.com/@gethashd/bytecave-browser/-/bytecave-browser-1.0.46.tgz#d772192678d478d214dcbf2a08f2bda6a26376ed"
-  integrity sha512-2cx4vZOxDUzAdEAsAnPATq3kLK6KzVZbKCqA2NoutjCBs8G+0KThhnBfkQCN5ZgQlCuc5AjGGeFADbOc0b5EJw==
+"@gethashd/bytecave-browser@1.0.60":
+  version "1.0.60"
+  resolved "https://registry.yarnpkg.com/@gethashd/bytecave-browser/-/bytecave-browser-1.0.60.tgz#58559275763fe1e18afc9e6ef8526b9ed46d05b1"
+  integrity sha512-n5ddVdcTPkPffmDF2V6BdxBtZzEcmCCEMueNTatolXkFk7kQ0J+qZIhcEBWWXkQ5HCXkAtuWix60XrnPOqYByA==
   dependencies:
     "@chainsafe/libp2p-noise" "^17.0.0"
     "@chainsafe/libp2p-yamux" "^8.0.1"
@@ -1429,6 +1429,7 @@
     "@libp2p/identify" "^4.0.9"
     "@libp2p/webrtc" "^6.0.10"
     "@libp2p/websockets" "^10.1.2"
+    "@libp2p/webtransport" "^6.0.12"
     "@multiformats/multiaddr" "^13.0.1"
     ethers "^6.0.0"
     libp2p "^3.1.2"
@@ -2033,6 +2034,23 @@
     uint8arraylist "^2.4.8"
     uint8arrays "^5.1.0"
     ws "^8.18.3"
+
+"@libp2p/webtransport@^6.0.12":
+  version "6.0.12"
+  resolved "https://registry.yarnpkg.com/@libp2p/webtransport/-/webtransport-6.0.12.tgz#6ee3090f0dcdbd64e0673fdbf4d621e37ac363ef"
+  integrity sha512-q64Q15H4slv+Lo7wReJX65wFUYJ+QGlm5ZVBh/+ByQVf9I8UeiZivY3LEzhAq2OtvunE3C/1MtCAJ0JXotgUVA==
+  dependencies:
+    "@chainsafe/libp2p-noise" "^17.0.0"
+    "@libp2p/interface" "^3.1.0"
+    "@libp2p/peer-id" "^6.0.4"
+    "@libp2p/utils" "^7.0.10"
+    "@multiformats/multiaddr" "^13.0.1"
+    "@multiformats/multiaddr-matcher" "^3.0.1"
+    multiformats "^13.3.6"
+    progress-events "^1.0.1"
+    race-signal "^2.0.0"
+    uint8arraylist "^2.4.8"
+    uint8arrays "^5.1.0"
 
 "@lit-labs/ssr-dom-shim@^1.5.0":
   version "1.5.1"
@@ -9761,7 +9779,7 @@ multicast-dns@^7.2.5:
     dns-packet "^5.2.2"
     thunky "^1.0.2"
 
-multiformats@^13.0.0, multiformats@^13.4.0, multiformats@^13.4.1:
+multiformats@^13.0.0, multiformats@^13.3.6, multiformats@^13.4.0, multiformats@^13.4.1:
   version "13.4.2"
   resolved "https://registry.yarnpkg.com/multiformats/-/multiformats-13.4.2.tgz#309ee17d3946db9a6954cf6832aeb2b4b10dd0f3"
   integrity sha512-eh6eHCrRi1+POZ3dA+Dq1C6jhP1GNtr9CRINMb67OKzqW9I5DUuZM/3jLPlzhgpGeiNUlEGEbkCYChXMCc/8DQ==

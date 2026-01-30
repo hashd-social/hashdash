@@ -85,6 +85,7 @@ export const HASHD_ID_ABI = [
   
   // View functions
   "function owner() view returns (address)",
+  "function getHashIdCountByDomain(string domain) view returns (uint256)",
   
   // Events
   "event DomainColorUpdated(string indexed domain, string color)",
