@@ -181,6 +181,11 @@
           "internalType": "address",
           "name": "bondingCurveAddress",
           "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "creatorPublicKeyHash",
+          "type": "bytes32"
         }
       ],
       "name": "addGroup",
@@ -389,6 +394,11 @@
               "internalType": "address",
               "name": "bondingCurveAddress",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "creatorPublicKeyHash",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct GroupFactoryStorage.GroupInfo",
@@ -460,6 +470,11 @@
               "internalType": "address",
               "name": "bondingCurveAddress",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "creatorPublicKeyHash",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct GroupFactoryStorage.GroupInfo",

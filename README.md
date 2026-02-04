@@ -63,7 +63,7 @@ The dashboard uses a **persistent peer configuration** system that automatically
 Configure initial peers in `.env`:
 
 ```bash
-# Direct node addresses for WebRTC connections (no relay needed)
+# Direct node addresses for WebSocket connections (no circuit relay needed)
 # Example: bat-alpha (P2P WS port 5012), bat-beta (5022), bat-gamma (5032)
 REACT_APP_DIRECT_NODE_ADDRS=/ip4/127.0.0.1/tcp/5012/ws/p2p/12D3KooW...,/ip4/127.0.0.1/tcp/5022/ws/p2p/12D3KooW...
 
@@ -108,18 +108,20 @@ The dashboard will recreate the config from `.env` variables.
 
 The dashboard tries connections in this order:
 
-1. **Direct WebRTC** - Tries `REACT_APP_DIRECT_NODE_ADDRS` first (no relay)
+1. **Direct WebSocket** - Tries `REACT_APP_DIRECT_NODE_ADDRS` first (no circuit relay)
 2. **Circuit Relay** - Falls back to `REACT_APP_RELAY_PEERS` if direct fails
 3. **On-chain Discovery** - Discovers additional nodes from VaultRegistry contract
 
 ### Decentralized Operation
 
-With direct node addresses configured, the dashboard can operate **without a relay**:
+With direct node addresses configured, the dashboard can operate **without a circuit relay**:
 
-- ✅ Direct P2P connections to storage nodes
+- ✅ Direct WebSocket connections to storage nodes (P2P via libp2p)
 - ✅ Automatic peer discovery via gossip
 - ✅ No single point of failure
 - ✅ Censorship resistant
+
+**Note:** Connections use WebSocket transport (`/ws/` in multiaddrs), not WebRTC. WebRTC support exists in bytecave-core but requires relay-assisted signaling.
 
 ## Tech Stack
 
@@ -127,4 +129,5 @@ With direct node addresses configured, the dashboard can operate **without a rel
 - Tailwind CSS
 - ethers.js
 - Lucide React icons
-- libp2p (WebRTC, WebSockets, Circuit Relay)
+- libp2p (WebSockets, Circuit Relay)
+- @gethashd/bytecave-browser (P2P storage client)

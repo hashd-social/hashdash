@@ -301,6 +301,11 @@
           "internalType": "address",
           "name": "postsAddress",
           "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "creatorPublicKeyHash",
+          "type": "bytes32"
         }
       ],
       "stateMutability": "view",
@@ -435,6 +440,11 @@
           "internalType": "uint256",
           "name": "maxNFTs",
           "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "creatorPublicKey",
+          "type": "bytes"
         }
       ],
       "name": "createGroup",
@@ -524,6 +534,11 @@
               "internalType": "address",
               "name": "bondingCurveAddress",
               "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "creatorPublicKeyHash",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct GroupFactoryStorage.GroupInfo",

@@ -473,6 +473,25 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "groupTokenAddress",
+          "type": "address"
+        }
+      ],
+      "name": "getGroupPostCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "postId",
           "type": "uint256"
