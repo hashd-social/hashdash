@@ -1,6 +1,11 @@
 # HASHDash
 
-Official Management Portal for HASHD waitlist onboarding, analytics, and operational controls. This system is separate from the HASHD protocol and does not affect the main client.
+HASHDash is the operational dashboard for the HASHD network.
+It’s used to manage onboarding, approvals, and visibility around the HASHD protocol without being part of the protocol itself.
+
+In practice, HASHDash is where admins and operators handle things like application review, waitlists, basic analytics, and network oversight. It authenticates via wallets, reflects on-chain state where relevant, and interacts with HASHD services, but it does not hold encryption keys, control access to content, or participate in message privacy.
+
+The dashboard exists to support early-stage operations and coordination while the protocol is still evolving. As HASHD becomes more permissionless, the role of HASHDash is expected to shrink or shift, but today it provides a pragmatic interface for managing the human and operational layer around a decentralized communications network.
 
 ## Setup
 
